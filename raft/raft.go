@@ -34,6 +34,18 @@ const (
 	replicationInterval = 200 * time.Millisecond
 )
 
+// resetElectionTimeoutLocked 重置节点选举超时计时器
+func (rf *Raft) resetElectionTimeoutLocked() {
+	rf.electionStart = time.Now()
+	interval := int64(electionTimeoutUpperBound - electionTimeoutLowerBound)
+	rf.electionTimeout = electionTimeoutLowerBound + time.Duration(rand.Int63()%interval)
+}
+
+// isElectionTimeoutLocked 判断节点选举超时
+func (rf *Raft) isElectionTimeoutLocked() bool {
+	return time.Since(rf.electionStart) > rf.electionTimeout
+}
+
 type Role string
 
 const (
@@ -80,23 +92,6 @@ type Raft struct {
 
 	electionStart   time.Time
 	electionTimeout time.Duration // random
-}
-
-// resetElectionTimeoutLocked 重置节点选举超时计时器
-func (rf *Raft) resetElectionTimeoutLocked() {
-	rf.electionStart = time.Now()
-	interval := int64(electionTimeoutUpperBound - electionTimeoutLowerBound)
-	rf.electionTimeout = electionTimeoutLowerBound + time.Duration(rand.Int63()%interval)
-}
-
-// isElectionTimeoutLocked 判断节点选举超时
-func (rf *Raft) isElectionTimeoutLocked() bool {
-	return time.Since(rf.electionStart) > rf.electionTimeout
-}
-
-// contextCheckLocked 检测状态是否正确
-func (rf *Raft) contextCheckLocked(role Role, term int) bool {
-	return rf.currentTerm == term && rf.role == role
 }
 
 // becomeFollowerLocked 当收到的消息比自身term大时，需要转换为follower
@@ -233,30 +228,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	LOG(rf.me, rf.currentTerm, DVote, "-> S%d, vote granted", args.CandidateId)
 }
 
-type AppendEntriesArgs struct {
-	Term     int
-	LeaderId int
-}
-
-type AppendEntriesReply struct {
-	Term    int
-	Success bool
-}
-
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	if args.Term < rf.currentTerm {
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, higher term, T%d<T%d", args.LeaderId, args.Term, rf.currentTerm)
-		return
-	}
-	if args.Term >= rf.currentTerm {
-		rf.becomeFollowerLocked(args.Term)
-	}
-	rf.resetElectionTimeoutLocked()
-}
-
 // example code to send a RequestVote RPC to a server.
 // server is the index of the target server in rf.peers[].
 // expects RPC arguments in args.
@@ -286,11 +257,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 // the struct itself.
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
-}
-
-func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
 
@@ -333,6 +299,87 @@ func (rf *Raft) Kill() {
 func (rf *Raft) killed() bool {
 	z := atomic.LoadInt32(&rf.dead)
 	return z == 1
+}
+
+// contextCheckLocked 检测状态是否正确
+func (rf *Raft) contextCheckLocked(role Role, term int) bool {
+	return rf.currentTerm == term && rf.role == role
+}
+
+type AppendEntriesArgs struct {
+	Term     int
+	LeaderId int
+}
+
+type AppendEntriesReply struct {
+	Term    int
+	Success bool
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.Term < rf.currentTerm {
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, higher term, T%d<T%d", args.LeaderId, args.Term, rf.currentTerm)
+		return
+	}
+	if args.Term >= rf.currentTerm {
+		rf.becomeFollowerLocked(args.Term)
+	}
+	rf.resetElectionTimeoutLocked()
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
+
+// startReplication 发起日志同步
+func (rf *Raft) startReplication(term int) bool {
+	replicationToPeer := func(peer int, args *AppendEntriesArgs) {
+		reply := AppendEntriesReply{}
+		ok := rf.sendAppendEntries(peer, args, &reply)
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		if !ok {
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Lost or crashed", peer)
+			return
+		}
+		if reply.Term > rf.currentTerm {
+			rf.becomeFollowerLocked(reply.Term)
+			return
+		}
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if !rf.contextCheckLocked(Leader, term) {
+		LOG(rf.me, rf.currentTerm, DLog, "Lost leader[%d] to %s[T%d]", term, rf.role, rf.currentTerm)
+		return false
+	}
+
+	for peer := 0; peer < len(rf.peers); peer++ {
+		if peer == rf.me {
+			continue
+		}
+		args := &AppendEntriesArgs{Term: rf.currentTerm, LeaderId: rf.me}
+		go replicationToPeer(peer, args)
+	}
+	return true
+}
+
+// replicationTicker 心跳和日志同步逻辑，生命周期为term任期内
+func (rf *Raft) replicationTicker(term int) {
+	for !rf.killed() {
+		ok := rf.startReplication(term)
+		if !ok {
+			break
+		}
+
+		time.Sleep(replicationInterval)
+	}
 }
 
 // startElection candidate节点开始获取选票
@@ -401,53 +448,6 @@ func (rf *Raft) electionTicker() {
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
-}
-
-// replicationTicker 心跳和日志同步逻辑，生命周期为term任期内
-func (rf *Raft) replicationTicker(term int) {
-	for !rf.killed() {
-		ok := rf.startReplication(term)
-		if !ok {
-			break
-		}
-
-		time.Sleep(replicationInterval)
-	}
-}
-
-// startReplication 发起日志同步
-func (rf *Raft) startReplication(term int) bool {
-	replicationToPeer := func(peer int, args *AppendEntriesArgs) {
-		reply := AppendEntriesReply{}
-		ok := rf.sendAppendEntries(peer, args, &reply)
-		rf.mu.Lock()
-		defer rf.mu.Unlock()
-		if !ok {
-			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Lost or crashed", peer)
-			return
-		}
-		if reply.Term > rf.currentTerm {
-			rf.becomeFollowerLocked(reply.Term)
-			return
-		}
-	}
-
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	if !rf.contextCheckLocked(Leader, term) {
-		LOG(rf.me, rf.currentTerm, DLog, "Lost leader[%d] to %s[T%d]", term, rf.role, rf.currentTerm)
-		return false
-	}
-
-	for peer := 0; peer < len(rf.peers); peer++ {
-		if peer == rf.me {
-			continue
-		}
-		args := &AppendEntriesArgs{Term: rf.currentTerm, LeaderId: rf.me}
-		go replicationToPeer(peer, args)
-	}
-	return true
 }
 
 // the service or tester wants to create a Raft server. the ports
