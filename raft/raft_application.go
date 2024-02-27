@@ -1,16 +1,15 @@
 package raft
 
-// applicationTicker
 func (rf *Raft) applicationTicker() {
 	for !rf.killed() {
 		rf.mu.Lock()
-		rf.applyCond.Wait() // 释放rf.mu
-		// 收到信号后apply log，从上次apply之后一直到最新commit的log
+		rf.applyCond.Wait() // 需要持有锁
 		entries := make([]LogEntry, 0)
-		for i := rf.lastApplied + 1; i < rf.commitIndex; i++ {
+		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 			entries = append(entries, rf.log[i])
 		}
 		rf.mu.Unlock()
+
 		for i, entry := range entries {
 			rf.applyCh <- ApplyMsg{
 				CommandValid: entry.CommandValid,
@@ -18,6 +17,7 @@ func (rf *Raft) applicationTicker() {
 				CommandIndex: rf.lastApplied + 1 + i,
 			}
 		}
+
 		rf.mu.Lock()
 		LOG(rf.me, rf.currentTerm, DApply, "Apply log for [%d, %d]", rf.lastApplied+1, rf.lastApplied+len(entries))
 		rf.lastApplied += len(entries)

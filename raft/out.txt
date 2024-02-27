@@ -1,0 +1,97 @@
+Test (PartB): basic agreement ...
+000012 T0000 VOTE S0 Follower->Candidate, For T1
+000015 T0000 VOTE S2 Follower->Candidate, For T1
+000015 T0000 VOTE S1 Follower->Candidate, For T1
+000021 T0001 VOTE S1 -> S2, Reject vote, already voted to S1
+000021 T0001 VOTE S2 -> S0, Reject vote, already voted to S2
+000021 T0001 VOTE S0 -> S2, Reject vote, already voted to S0
+000022 T0001 VOTE S1 -> S0, Reject vote, already voted to S1
+000023 T0001 VOTE S0 -> S1, Reject vote, already voted to S0
+000023 T0001 VOTE S2 -> S1, Reject vote, already voted to S2
+001049 T0001 VOTE S2 Candidate->Candidate, For T2
+001054 T0001 LOG1 S1 Candidate->Follower, For T1->T2
+001054 T0002 VOTE S1 Compare last log, Me: [0]T0, Candidate: [0]T0
+001054 T0002 VOTE S1 -> S2, vote granted
+001054 T0001 LOG1 S0 Candidate->Follower, For T1->T2
+001054 T0002 VOTE S0 Compare last log, Me: [0]T0, Candidate: [0]T0
+001054 T0002 VOTE S0 -> S2, vote granted
+001055 T0002 LEAD S2 become Leader in T%!s(int=2)
+001056 T0002 VOTE S2 Lost context, abort RequestVoteReply for S0
+001060 T0002 DBUG S1 <- S2, Receive log, Prev=[0]T0, Len()=0
+001060 T0002 LOG1 S1 Follower->Follower, For T2->T2
+001060 T0002 LOG2 S1 Follower accept logs: (0, 0]
+001060 T0002 DBUG S0 <- S2, Receive log, Prev=[0]T0, Len()=0
+001060 T0002 LOG1 S0 Follower->Follower, For T2->T2
+001060 T0002 LOG2 S0 Follower accept logs: (0, 0]
+001539 T0002 LEAD S2 Leader accept log [1]T2
+003061 T0002 DBUG S1 <- S2, Receive log, Prev=[0]T0, Len()=1
+003061 T0002 LOG1 S1 Follower->Follower, For T2->T2
+003061 T0002 LOG2 S1 Follower accept logs: (0, 1]
+003061 T0002 DBUG S0 <- S2, Receive log, Prev=[0]T0, Len()=1
+003062 T0002 LOG1 S0 Follower->Follower, For T2->T2
+003062 T0002 LOG2 S0 Follower accept logs: (0, 1]
+003063 T0002 APLY S2 Leader Update commit index 0->1
+003063 T0002 APLY S2 Apply log for [1, 0]
+005062 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+005063 T0002 LOG1 S1 Follower->Follower, For T2->T2
+005063 T0002 LOG2 S1 Follower accept logs: (1, 1]
+005063 T0002 APLY S1 Update commit index 0->1
+005062 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+005063 T0002 LOG1 S0 Follower->Follower, For T2->T2
+005063 T0002 LOG2 S0 Follower accept logs: (1, 1]
+005063 T0002 APLY S0 Update commit index 0->1
+005064 T0002 APLY S1 Apply log for [1, 0]
+005064 T0002 APLY S0 Apply log for [1, 0]
+007070 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+007070 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+007070 T0002 LOG1 S1 Follower->Follower, For T2->T2
+007070 T0002 LOG2 S1 Follower accept logs: (1, 1]
+007070 T0002 LOG1 S0 Follower->Follower, For T2->T2
+007071 T0002 LOG2 S0 Follower accept logs: (1, 1]
+009076 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+009076 T0002 LOG1 S1 Follower->Follower, For T2->T2
+009076 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+009077 T0002 LOG1 S0 Follower->Follower, For T2->T2
+009077 T0002 LOG2 S0 Follower accept logs: (1, 1]
+009076 T0002 LOG2 S1 Follower accept logs: (1, 1]
+011078 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+011078 T0002 LOG1 S1 Follower->Follower, For T2->T2
+011078 T0002 LOG2 S1 Follower accept logs: (1, 1]
+011078 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+011079 T0002 LOG1 S0 Follower->Follower, For T2->T2
+011079 T0002 LOG2 S0 Follower accept logs: (1, 1]
+013087 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+013087 T0002 LOG1 S0 Follower->Follower, For T2->T2
+013088 T0002 LOG2 S0 Follower accept logs: (1, 1]
+013087 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+013088 T0002 LOG1 S1 Follower->Follower, For T2->T2
+013089 T0002 LOG2 S1 Follower accept logs: (1, 1]
+015089 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+015090 T0002 LOG1 S0 Follower->Follower, For T2->T2
+015090 T0002 LOG2 S0 Follower accept logs: (1, 1]
+015089 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+015090 T0002 LOG1 S1 Follower->Follower, For T2->T2
+015090 T0002 LOG2 S1 Follower accept logs: (1, 1]
+017100 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+017100 T0002 LOG1 S0 Follower->Follower, For T2->T2
+017100 T0002 LOG2 S0 Follower accept logs: (1, 1]
+017100 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+017100 T0002 LOG1 S1 Follower->Follower, For T2->T2
+017100 T0002 LOG2 S1 Follower accept logs: (1, 1]
+019098 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+019099 T0002 LOG1 S0 Follower->Follower, For T2->T2
+019099 T0002 LOG2 S0 Follower accept logs: (1, 1]
+019098 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+019099 T0002 LOG1 S1 Follower->Follower, For T2->T2
+019099 T0002 LOG2 S1 Follower accept logs: (1, 1]
+021112 T0002 DBUG S1 <- S2, Receive log, Prev=[1]T2, Len()=0
+021112 T0002 LOG1 S1 Follower->Follower, For T2->T2
+021112 T0002 LOG2 S1 Follower accept logs: (1, 1]
+021112 T0002 DBUG S0 <- S2, Receive log, Prev=[1]T2, Len()=0
+021113 T0002 LOG1 S0 Follower->Follower, For T2->T2
+021113 T0002 LOG2 S0 Follower accept logs: (1, 1]
+--- FAIL: TestBasicAgreePartB (2.16s)
+    config.go:597: one(100) failed to reach agreement
+FAIL
+exit status 1
+FAIL	github.com/joeyz1729/ruaftkv/raft	3.139s

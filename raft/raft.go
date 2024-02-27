@@ -122,7 +122,7 @@ func (rf *Raft) becomeLeaderLocked() {
 		LOG(rf.me, rf.currentTerm, DError, "Only Candidate can become Leader")
 		return
 	}
-	LOG(rf.me, rf.currentTerm, DLeader, "become Leader in T%s", rf.currentTerm)
+	LOG(rf.me, rf.currentTerm, DLeader, "become Leader in T%d", rf.currentTerm)
 	rf.role = Leader
 	for peer := 0; peer < len(rf.peers); peer++ {
 		rf.nextIndex[peer] = len(rf.log)
@@ -199,13 +199,20 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if rf.role != Leader {
+		return 0, 0, false
+	}
 	// Your code here (PartB).
-
-	return index, term, isLeader
+	rf.log = append(rf.log, LogEntry{
+		CommandValid: true,
+		Command:      command,
+		Term:         rf.currentTerm,
+	})
+	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
+	return len(rf.log) - 1, rf.currentTerm, true
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -259,6 +266,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.applyCh = applyCh
 	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.commitIndex = 0
+	rf.lastApplied = 0
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

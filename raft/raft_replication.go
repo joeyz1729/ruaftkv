@@ -80,7 +80,6 @@ func (rf *Raft) getMajorityIndexLocked() int {
 	copy(tmpIndices, rf.matchIndex)
 	sort.Ints(tmpIndices)
 	majorityIdx := len(rf.peers) / 2
-	LOG(rf.me, rf.currentTerm, DDebug, "Match index after sort: %v, majority[%d]=%d", tmpIndices, majorityIdx, tmpIndices[majorityIdx])
 	return tmpIndices[majorityIdx]
 }
 
@@ -100,6 +99,11 @@ func (rf *Raft) startReplication(term int) bool {
 			return
 		}
 
+		if !rf.contextCheckLocked(Leader, term) {
+			LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Context Lost, T%d:Leader->T%d:%d", peer, term, rf.currentTerm, rf.role)
+			return
+		}
+
 		if !reply.Success {
 			// peer的日志不全，或者任期不匹配，回退到上一任期
 			idx, term := args.PrevLogIndex, args.PrevLogTerm
@@ -107,7 +111,7 @@ func (rf *Raft) startReplication(term int) bool {
 				idx--
 			}
 			rf.nextIndex[peer] = idx + 1
-			LOG(rf.me, rf.currentTerm, DLog, "Not match with S%d in %d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not match at S%d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
 		// 更新各节点log index

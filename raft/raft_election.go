@@ -44,8 +44,8 @@ type RequestVoteArgs struct {
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (PartA).
-	Term         int
-	VotedGranted bool
+	Term        int
+	VoteGranted bool
 }
 
 // example RequestVote RPC handler.
@@ -55,7 +55,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 
 	reply.Term = rf.currentTerm
-	reply.VotedGranted = false
+	reply.VoteGranted = false
 
 	// 检查任期
 	if args.Term < rf.currentTerm {
@@ -78,7 +78,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	reply.VotedGranted = true
+	reply.VoteGranted = true
 	rf.voteFor = args.CandidateId
 	rf.resetElectionTimeoutLocked()
 	LOG(rf.me, rf.currentTerm, DVote, "-> S%d, vote granted", args.CandidateId)
@@ -140,7 +140,7 @@ func (rf *Raft) startElection(term int) {
 			LOG(rf.me, rf.currentTerm, DVote, "Lost context, abort RequestVoteReply for S%d", peer)
 			return
 		}
-		if reply.VotedGranted {
+		if reply.VoteGranted {
 			votes++
 			if votes > len(rf.peers)/2 {
 				rf.becomeLeaderLocked()
