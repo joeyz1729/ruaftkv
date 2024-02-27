@@ -76,12 +76,17 @@ type Raft struct {
 	currentTerm int
 	voteFor     int // -1 means vote for no one
 
-	electionStart   time.Time
-	electionTimeout time.Duration // random
-
 	log        []LogEntry // 日志记录列表
 	nextIndex  []int      // 仅leader使用
 	matchIndex []int      // 仅leader使用
+
+	commitIndex int
+	lastApplied int
+	applyCh     chan ApplyMsg
+	applyCond   *sync.Cond
+
+	electionStart   time.Time
+	electionTimeout time.Duration // random
 }
 
 // becomeFollowerLocked 当收到的消息比自身term大时，需要转换为follower
@@ -252,11 +257,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 
+	rf.applyCh = applyCh
+	rf.applyCond = sync.NewCond(&rf.mu)
+
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start electionTicker goroutine to start elections
 	go rf.electionTicker()
+	go rf.applicationTicker()
 
 	return rf
 }
