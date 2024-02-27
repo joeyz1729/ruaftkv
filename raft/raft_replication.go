@@ -27,6 +27,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	LOG(rf.me, rf.currentTerm, DDebug, "<- S%d, Receive log, Prev=[%d]T%d, Len()=%d", args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
 	reply.Term = rf.currentTerm
 	reply.Success = false
 
@@ -40,9 +41,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// 日志同步
-	if args.PrevLogIndex > len(rf.log) {
+	if args.PrevLogIndex >= len(rf.log) {
 		// 日志不全
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, follower log too short, len: %d < Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, follower log too short, len: %d <= Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		return
 	}
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
@@ -119,7 +120,7 @@ func (rf *Raft) startReplication(term int) bool {
 			LeaderId:     rf.me,
 			PrevLogIndex: prevIndex,
 			PrevLogTerm:  prevTerm,
-			Entries:      rf.log[prevIndex+1:],
+			Entries:      append([]LogEntry(nil), rf.log[prevIndex+1:]...), // 防止竞争
 		}
 		go replicationToPeer(peer, args)
 	}
