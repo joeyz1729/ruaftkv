@@ -216,7 +216,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	if args.Term > rf.currentTerm {
-		rf.becomeFollowerLocked(reply.Term)
+		rf.becomeFollowerLocked(args.Term)
 	}
 	if rf.votedFor != -1 {
 		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject, already voted to S%d", args.CandidateId, rf.votedFor)
