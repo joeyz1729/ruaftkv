@@ -17,6 +17,13 @@ func (rf *Raft) isElectionTimeoutLocked() bool {
 	return time.Since(rf.electionStart) > rf.electionTimeout
 }
 
+// isMoreUpToDate 检查任期内节点的日志索引是否为新的
+func (rf *Raft) isMoreUpToDate(candidateIndex, candidateTerm int) bool {
+	//l := len(rf.log)
+	//lastIndex, lastTerm := l - 1, rf.log[l - 1].Term
+	return false
+}
+
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (PartA, PartB).
@@ -32,12 +39,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 	}
-	if rf.votedFor != -1 {
-		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject, already voted to S%d", args.CandidateId, rf.votedFor)
+	if rf.voteFor != -1 {
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject, already voted to S%d", args.CandidateId, rf.voteFor)
 		return
 	}
 	reply.VotedGranted = true
-	rf.votedFor = args.CandidateId
+	rf.voteFor = args.CandidateId
 	rf.resetElectionTimeoutLocked()
 	LOG(rf.me, rf.currentTerm, DVote, "-> S%d, vote granted", args.CandidateId)
 }

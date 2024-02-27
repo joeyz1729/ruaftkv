@@ -2,9 +2,19 @@ package raft
 
 import "time"
 
+type LogEntry struct {
+	Term         int
+	CommandValid bool
+	Command      interface{}
+}
+
 type AppendEntriesArgs struct {
 	Term     int
 	LeaderId int
+
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []LogEntry
 }
 
 type AppendEntriesReply struct {
@@ -12,10 +22,15 @@ type AppendEntriesReply struct {
 	Success bool
 }
 
+// AppendEntries 心跳以及与leader日志同步
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	reply.Term = rf.currentTerm
+	reply.Success = false
+
+	// 对齐term
 	if args.Term < rf.currentTerm {
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, higher term, T%d<T%d", args.LeaderId, args.Term, rf.currentTerm)
 		return
@@ -23,6 +38,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term >= rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 	}
+
+	// 日志同步
+	if args.PrevLogIndex > len(rf.log) {
+		// 日志不全
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, follower log too short, len: %d < Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
+		return
+	}
+	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		// 日志与leader任期不匹配
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, prev log's term not match, [%d]: T%d != T%d", args.LeaderId, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
+		return
+	}
+	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	reply.Success = true
+	LOG(rf.me, rf.currentTerm, DLog2, "Follower accept logs: (%d, %d]", args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
+
+	// TODO: handle the args.LeaderCommit
+
 	rf.resetElectionTimeoutLocked()
 }
 
@@ -46,6 +79,23 @@ func (rf *Raft) startReplication(term int) bool {
 			rf.becomeFollowerLocked(reply.Term)
 			return
 		}
+
+		if !reply.Success {
+			// peer的日志不全，或者任期不匹配，回退到上一任期
+			idx, term := args.PrevLogIndex, args.PrevLogTerm
+			for idx > 0 && rf.log[idx].Term == term {
+				idx--
+			}
+			rf.nextIndex[peer] = idx + 1
+			LOG(rf.me, rf.currentTerm, DLog, "Not match with S%d in %d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
+			return
+		}
+		// 更新index
+		rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries)
+		rf.nextIndex[peer] = rf.matchIndex[peer] + 1
+
+		// TODO: update CommitIndex
+
 	}
 
 	rf.mu.Lock()
@@ -58,9 +108,19 @@ func (rf *Raft) startReplication(term int) bool {
 
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
+			rf.matchIndex[peer] = len(rf.log) - 1
+			rf.nextIndex[peer] = len(rf.log)
 			continue
 		}
-		args := &AppendEntriesArgs{Term: rf.currentTerm, LeaderId: rf.me}
+		prevIndex := rf.nextIndex[peer] - 1
+		prevTerm := rf.log[prevIndex].Term
+		args := &AppendEntriesArgs{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			PrevLogIndex: prevIndex,
+			PrevLogTerm:  prevTerm,
+			Entries:      rf.log[prevIndex+1:],
+		}
 		go replicationToPeer(peer, args)
 	}
 	return true

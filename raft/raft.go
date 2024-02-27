@@ -74,10 +74,14 @@ type Raft struct {
 	// state a Raft server must maintain.
 	role        Role
 	currentTerm int
-	votedFor    int // -1 means vote for no one
+	voteFor     int // -1 means vote for no one
 
 	electionStart   time.Time
 	electionTimeout time.Duration // random
+
+	log        []LogEntry // 日志记录列表
+	nextIndex  []int      // 仅leader使用
+	matchIndex []int      // 仅leader使用
 }
 
 // becomeFollowerLocked 当收到的消息比自身term大时，需要转换为follower
@@ -89,7 +93,7 @@ func (rf *Raft) becomeFollowerLocked(term int) {
 	LOG(rf.me, rf.currentTerm, DLog, "%s->Follower, For T%d->T%d", rf.role, rf.currentTerm, term)
 	rf.role = Follower
 	if term > rf.currentTerm {
-		rf.votedFor = -1
+		rf.voteFor = -1
 	}
 	rf.currentTerm = term
 
@@ -104,7 +108,7 @@ func (rf *Raft) becomeCandidateLocked() {
 	LOG(rf.me, rf.currentTerm, DVote, "%s->Candidate, For T%d", rf.role, rf.currentTerm+1)
 	rf.currentTerm++
 	rf.role = Candidate
-	rf.votedFor = rf.me
+	rf.voteFor = rf.me
 }
 
 // becomeCandidateLocked 成为leader节点
@@ -115,6 +119,10 @@ func (rf *Raft) becomeLeaderLocked() {
 	}
 	LOG(rf.me, rf.currentTerm, DLeader, "become Leader in T%s", rf.currentTerm)
 	rf.role = Leader
+	for peer := 0; peer < len(rf.peers); peer++ {
+		rf.nextIndex[peer] = len(rf.log)
+		rf.matchIndex[peer] = 0
+	}
 }
 
 // return currentTerm and whether this server
@@ -254,7 +262,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (PartA, PartB, PartC).
 	rf.role = Follower
 	rf.currentTerm = 0
-	rf.votedFor = -1
+	rf.voteFor = -1
+
+	rf.log = append(rf.log, LogEntry{}) // 避免边界判断
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
