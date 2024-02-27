@@ -30,6 +30,8 @@ import (
 const (
 	electionTimeoutLowerBound = 250 * time.Millisecond
 	electionTimeoutUpperBound = 400 * time.Millisecond
+
+	replicationInterval = 200 * time.Millisecond
 )
 
 type Role string
@@ -190,6 +192,16 @@ type RequestVoteReply struct {
 	VotedGranted bool
 }
 
+type AppendEntriesArgs struct {
+	Term     int
+	LeaderId int
+}
+
+type AppendEntriesReply struct {
+	Term    int
+	Success bool
+}
+
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (PartA, PartB).
@@ -213,6 +225,20 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.votedFor = args.CandidateId
 	rf.resetElectionTimeoutLocked()
 	LOG(rf.me, rf.currentTerm, DVote, "-> S%d, vote granted", args.CandidateId)
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.Term < rf.currentTerm {
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, higher term, T%d < T%d", args.LeaderId, args.Term, rf.currentTerm)
+		return
+	}
+	if args.Term >= rf.currentTerm {
+		rf.becomeFollowerLocked(args.Term)
+	}
+	rf.resetElectionTimeoutLocked()
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -244,6 +270,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	return ok
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
 
@@ -304,6 +335,18 @@ func (rf *Raft) electionTicker() {
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
+}
+
+// replicationTicker 心跳和日志同步逻辑，生命周期为term任期内
+func (rf *Raft) replicationTicker(term int) {
+	for !rf.killed() {
+		ok := rf.startReplication(term)
+		if !ok {
+			break
+		}
+
+		time.Sleep(replicationInterval)
 	}
 }
 
@@ -398,11 +441,42 @@ func (rf *Raft) startElection(term int) {
 	}
 }
 
+// startReplication 发起日志同步
+func (rf *Raft) startReplication(term int) bool {
+	replicationToPeer := func(peer int, args *AppendEntriesArgs) {
+		reply := AppendEntriesReply{}
+		ok := rf.sendAppendEntries(peer, args, &reply)
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		if !ok {
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Lost or crashed", peer)
+			return
+		}
+		if reply.Term > rf.currentTerm {
+			rf.becomeFollowerLocked(reply.Term)
+			return
+		}
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if !rf.contextLostLocked(Leader, term) {
+		LOG(rf.me, rf.currentTerm, DLog, "Lost leader[%d] to %s[T%d]", term, rf.role, rf.currentTerm)
+		return false
+	}
+
+	for peer := 0; peer < len(rf.peers); peer++ {
+		if peer == rf.me {
+			continue
+		}
+		args := &AppendEntriesArgs{Term: rf.currentTerm, LeaderId: rf.me}
+		go replicationToPeer(peer, args)
+	}
+	return true
+}
+
 // contextLostLocked 检测状态是否正确
 func (rf *Raft) contextLostLocked(role Role, term int) bool {
 	return rf.currentTerm == term && rf.role == role
-}
-
-func (rf *Raft) replicationTicker(term int) {
-
 }
