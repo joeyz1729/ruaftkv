@@ -24,8 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	//	"course/labgob"
-	"course/labrpc"
+	"github.com/joeyz1729/ruaftkv/labrpc"
 )
 
 // as each Raft peer becomes aware that successive log entries are

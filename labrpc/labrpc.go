@@ -51,7 +51,7 @@ package labrpc
 
 import (
 	"bytes"
-	"course/labgob"
+	"github.com/joeyz1729/ruaftkv/labgob"
 	"log"
 	"math/rand"
 	"reflect"
