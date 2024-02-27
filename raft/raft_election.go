@@ -17,11 +17,35 @@ func (rf *Raft) isElectionTimeoutLocked() bool {
 	return time.Since(rf.electionStart) > rf.electionTimeout
 }
 
-// isMoreUpToDate 检查任期内节点的日志索引是否为新的
-func (rf *Raft) isMoreUpToDate(candidateIndex, candidateTerm int) bool {
-	//l := len(rf.log)
-	//lastIndex, lastTerm := l - 1, rf.log[l - 1].Term
-	return false
+// isMoreUpToDateLocked 检查节点日志索引是否为新
+func (rf *Raft) isMoreUpToDateLocked(candidateIndex, candidateTerm int) bool {
+	l := len(rf.log)
+	lastIndex, lastTerm := l-1, rf.log[l-1].Term
+
+	LOG(rf.me, rf.currentTerm, DVote, "Compare last log, Me: [%d]T%d, Candidate: [%d]T%d", lastIndex, lastTerm, candidateIndex, candidateTerm)
+	if lastTerm != candidateTerm {
+		return lastTerm > candidateTerm
+	}
+	return lastIndex > candidateIndex
+}
+
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+type RequestVoteArgs struct {
+	// Your data here (PartA, PartB).
+	Term        int
+	CandidateId int
+
+	LastLogIndex int
+	LastLogTerm  int
+}
+
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+type RequestVoteReply struct {
+	// Your data here (PartA).
+	Term         int
+	VotedGranted bool
 }
 
 // example RequestVote RPC handler.
@@ -32,6 +56,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	reply.Term = rf.currentTerm
 	reply.VotedGranted = false
+
+	// 检查任期
 	if args.Term < rf.currentTerm {
 		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject vote, higher term, T%d>T%d", args.CandidateId, rf.currentTerm, args.Term)
 		return
@@ -39,10 +65,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 	}
+
+	// 检查是否投票
 	if rf.voteFor != -1 {
-		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject, already voted to S%d", args.CandidateId, rf.voteFor)
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject vote, already voted to S%d", args.CandidateId, rf.voteFor)
 		return
 	}
+
+	// 检查日志
+	if rf.isMoreUpToDateLocked(args.LastLogIndex, args.LastLogTerm) {
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject vote, candidate less up-to-date")
+		return
+	}
+
 	reply.VotedGranted = true
 	rf.voteFor = args.CandidateId
 	rf.resetElectionTimeoutLocked()
@@ -120,12 +155,18 @@ func (rf *Raft) startElection(term int) {
 		LOG(rf.me, rf.currentTerm, DVote, "Lost Candidate to %s, abort RequestVote", rf.me)
 		return
 	}
+	l := len(rf.log)
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			votes++
 			continue
 		}
-		args := &RequestVoteArgs{Term: rf.currentTerm, CandidateId: rf.me}
+		args := &RequestVoteArgs{
+			Term:         rf.currentTerm,
+			CandidateId:  rf.me,
+			LastLogIndex: l - 1,
+			LastLogTerm:  rf.log[l-1].Term,
+		}
 		go askVoteFromPeer(peer, args)
 	}
 }
