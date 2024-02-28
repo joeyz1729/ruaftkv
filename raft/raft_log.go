@@ -126,7 +126,7 @@ func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
 	rl.snapLastIndex = index
 	rl.snapLastTerm = rl.tailLog[idx].Term
 	rl.snapshot = snapshot
-	newEntries := make([]*LogEntry, 0, rl.size()-1-rl.snapLastIndex)
+	newEntries := make([]*LogEntry, 0, rl.size()-rl.snapLastIndex)
 	newEntries = append(newEntries, &LogEntry{Term: rl.snapLastTerm}) // dummy log entry
 	newEntries = append(newEntries, rl.tailLog[idx+1:]...)
 }

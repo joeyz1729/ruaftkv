@@ -125,9 +125,6 @@ func (rf *Raft) startReplication(term int) bool {
 			rf.becomeFollowerLocked(reply.Term)
 			return
 		}
-		LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%v",
-			peer, args.PrevLogIndex, args.PrevLogTerm, rf.nextIndex[peer]-1, rf.log.at(rf.nextIndex[peer]-1))
-		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Leader log=%v", peer, rf.log.String())
 
 		if !rf.contextCheckLocked(Leader, term) {
 			LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Context Lost, T%d:Leader->T%d:%d", peer, term, rf.currentTerm, rf.role)
@@ -155,7 +152,6 @@ func (rf *Raft) startReplication(term int) bool {
 				// 防止leader记录的peer nextIndex增大
 				rf.nextIndex[peer] = prevNextIndex
 			}
-			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not match at S%d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
 		// 更新各节点log index
