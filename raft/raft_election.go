@@ -67,8 +67,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// 检查是否投票
-	if rf.voteFor != -1 {
-		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject vote, already voted to S%d", args.CandidateId, rf.voteFor)
+	if rf.votedFor != -1 {
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject vote, already voted to S%d", args.CandidateId, rf.votedFor)
 		return
 	}
 
@@ -79,7 +79,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	reply.VoteGranted = true
-	rf.voteFor = args.CandidateId
+	rf.votedFor = args.CandidateId
+	rf.persistLocked()
 	rf.resetElectionTimeoutLocked()
 	LOG(rf.me, rf.currentTerm, DVote, "-> S%d, vote granted", args.CandidateId)
 }

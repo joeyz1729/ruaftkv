@@ -1184,7 +1184,7 @@ func TestSnapshotInstallUnCrashPartD(t *testing.T) {
 	snapcommon(t, "Test (PartD): install snapshots (unreliable+crash)", false, false, true)
 }
 
-// do the servers persist the snapshots, and
+// do the servers persistLocked the snapshots, and
 // restart using snapshot along with the
 // tail of the log?
 func TestSnapshotAllCrashPartD(t *testing.T) {
