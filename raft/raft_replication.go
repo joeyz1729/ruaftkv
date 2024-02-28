@@ -143,14 +143,14 @@ func (rf *Raft) startReplication(term int) bool {
 				firstTermIndex := rf.firstLogFor(reply.ConflictTerm)
 				if firstTermIndex != InvalidIndex {
 					// 以leader为准，跳过conflictTerm的所有日志
-					rf.nextIndex[peer] = firstTermIndex + 1
+					rf.nextIndex[peer] = firstTermIndex
 				} else {
 					// leader没有该term的日志，以follower为准
 					rf.nextIndex[peer] = reply.ConflictIndex
 				}
 			}
 
-			if prevNextIndex < rf.nextIndex[peer] {
+			if rf.nextIndex[peer] > prevNextIndex {
 				// 防止leader记录的peer nextIndex增大
 				rf.nextIndex[peer] = prevNextIndex
 			}
