@@ -24,8 +24,8 @@ func (rf *Raft) persistLocked() {
 	e.Encode(rf.currentTerm)
 	e.Encode(rf.votedFor)
 	rf.log.persist(e)
-	raftState := w.Bytes()
-	rf.persister.Save(raftState, rf.log.snapshot)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, rf.log.snapshot)
 	LOG(rf.me, rf.currentTerm, DPersist, "Persist: %v", rf.persistString())
 }
 
@@ -55,13 +55,11 @@ func (rf *Raft) readPersist(data []byte) {
 		LOG(rf.me, rf.currentTerm, DPersist, "Read log error: %v", err)
 		return
 	}
-
 	rf.log.snapshot = rf.persister.ReadSnapshot()
 
 	if rf.log.snapLastIndex > rf.commitIndex {
 		rf.commitIndex = rf.log.snapLastIndex
 		rf.lastApplied = rf.log.snapLastIndex
 	}
-
 	LOG(rf.me, rf.currentTerm, DPersist, "Read from persist: %v", rf.persistString())
 }

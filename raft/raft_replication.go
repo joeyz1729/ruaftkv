@@ -152,6 +152,10 @@ func (rf *Raft) startReplication(term int) bool {
 				// 防止leader记录的peer nextIndex增大
 				rf.nextIndex[peer] = prevNextIndex
 			}
+
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d",
+				peer, args.PrevLogIndex, args.PrevLogTerm, rf.nextIndex[peer]-1, rf.log.at(rf.nextIndex[peer]-1))
+			LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Leader log=%v", peer, rf.log.String())
 			return
 		}
 		// 更新各节点log index

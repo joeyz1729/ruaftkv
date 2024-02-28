@@ -10,10 +10,8 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (PartD).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
 	rf.log.doSnapshot(index, snapshot)
 	rf.persistLocked()
-
 }
 
 type InstallSnapshotArgs struct {
@@ -50,9 +48,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		LOG(rf.me, rf.currentTerm, DSnap, "<- S%d, Reject Snap, Higher Term: T%d>T%d", args.LeaderId, rf.currentTerm, args.Term)
 		return
 	}
-
 	if args.Term >= rf.currentTerm {
-		rf.becomeCandidateLocked()
+		rf.becomeFollowerLocked(args.Term)
 	}
 
 	// 已经同步过snapshot
@@ -61,11 +58,10 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 
-	rf.log.installSnapshot(args.LastIncludedIndex, args.Term, args.Snapshot)
+	rf.log.installSnapshot(args.LastIncludedIndex, args.LastIncludedTerm, args.Snapshot)
 	rf.persistLocked()
 	rf.snapPending = true
 	rf.applyCond.Signal()
-
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
@@ -73,7 +69,6 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	return ok
 }
 
-// installToPeer leader向follower发送snapshot安装请求并处理返回
 func (rf *Raft) installToPeer(peer, term int, args *InstallSnapshotArgs) {
 	reply := &InstallSnapshotReply{}
 	ok := rf.sendInstallSnapshot(peer, args, reply)
@@ -84,7 +79,7 @@ func (rf *Raft) installToPeer(peer, term int, args *InstallSnapshotArgs) {
 		LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Lost or crashed", peer)
 		return
 	}
-	LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, SendSnapshot, Reply=%v", peer, reply.String())
+	LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Append, Reply=%v", peer, reply.String())
 
 	// 对齐term
 	if reply.Term > rf.currentTerm {
@@ -104,5 +99,4 @@ func (rf *Raft) installToPeer(peer, term int, args *InstallSnapshotArgs) {
 		rf.nextIndex[peer] = rf.matchIndex[peer] + 1
 	}
 
-	// todo commit index
 }
