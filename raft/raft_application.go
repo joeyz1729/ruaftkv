@@ -4,9 +4,9 @@ func (rf *Raft) applicationTicker() {
 	for !rf.killed() {
 		rf.mu.Lock()
 		rf.applyCond.Wait() // 需要持有锁
-		entries := make([]LogEntry, 0)
+		entries := make([]*LogEntry, 0)
 		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-			entries = append(entries, rf.log[i])
+			entries = append(entries, rf.log.at(i))
 		}
 		rf.mu.Unlock()
 
