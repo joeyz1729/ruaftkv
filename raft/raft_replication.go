@@ -192,7 +192,7 @@ func (rf *Raft) startReplication(term int) bool {
 			LeaderId:     rf.me,
 			PrevLogIndex: prevIndex,
 			PrevLogTerm:  prevTerm,
-			Entries:      append([]*LogEntry(nil), rf.log.tailLog[prevIndex+1:]...), // 防止竞争
+			Entries:      rf.log.tail(prevIndex + 1), // 防止竞争
 			LeaderCommit: rf.commitIndex,
 		}
 		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Append, Args=%v", peer, args.String())

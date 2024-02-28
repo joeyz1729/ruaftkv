@@ -95,9 +95,7 @@ func (rl *RaftLog) tail(startIndex int) []*LogEntry {
 	if startIndex >= rl.size() {
 		return nil
 	}
-	entries := make([]*LogEntry, rl.size()-startIndex)
-	copy(entries, rl.tailLog[rl.idx(startIndex):])
-	return entries
+	return append([]*LogEntry(nil), rl.tailLog[rl.idx(startIndex):]...)
 }
 
 func (rl *RaftLog) append(e ...*LogEntry) {
