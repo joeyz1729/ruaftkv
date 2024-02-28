@@ -142,6 +142,17 @@ func (rf *Raft) becomeLeaderLocked() {
 	}
 }
 
+func (rf *Raft) firstLogFor(term int) int {
+	for idx, entry := range rf.log {
+		if entry.Term == term {
+			return idx
+		} else if entry.Term > term {
+			break
+		}
+	}
+	return InvalidIndex
+}
+
 func (rf *Raft) logString() string {
 	var terms string
 	prevTerm := rf.log[0].Term
@@ -228,17 +239,6 @@ func (rf *Raft) killed() bool {
 // contextCheckLocked 检测状态是否正确
 func (rf *Raft) contextCheckLocked(role Role, term int) bool {
 	return rf.currentTerm == term && rf.role == role
-}
-
-func (rf *Raft) firstLogFor(term int) int {
-	for idx, entry := range rf.log {
-		if entry.Term == term {
-			return idx
-		} else if entry.Term > term {
-			break
-		}
-	}
-	return InvalidIndex
 }
 
 // the service or tester wants to create a Raft server. the ports
