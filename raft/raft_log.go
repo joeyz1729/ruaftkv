@@ -91,8 +91,8 @@ func (rl *RaftLog) tail(startIndex int) []*LogEntry {
 	return append([]*LogEntry(nil), rl.tailLog[rl.idx(startIndex):]...)
 }
 
-func (rl *RaftLog) append(e ...*LogEntry) {
-	rl.tailLog = append(rl.tailLog, e...)
+func (rl *RaftLog) append(e *LogEntry) {
+	rl.tailLog = append(rl.tailLog, e)
 }
 
 func (rl *RaftLog) appendFrom(globalPrevIndex int, e ...*LogEntry) {
@@ -116,6 +116,10 @@ func (rl *RaftLog) String() string {
 
 // doSnapshot 应用层同步snapshot
 func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
+	if index <= rl.snapLastIndex {
+		return
+	}
+
 	idx := rl.idx(index)
 	rl.snapLastIndex = index
 	rl.snapLastTerm = rl.tailLog[idx].Term
@@ -123,6 +127,7 @@ func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
 	newEntries := make([]*LogEntry, 0, rl.size()-rl.snapLastIndex)
 	newEntries = append(newEntries, &LogEntry{Term: rl.snapLastTerm}) // dummy log entry
 	newEntries = append(newEntries, rl.tailLog[idx+1:]...)
+	rl.tailLog = newEntries
 }
 
 // installSnapshot 接收leader请求并同步snapshot

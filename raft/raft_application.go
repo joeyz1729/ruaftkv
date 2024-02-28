@@ -6,8 +6,18 @@ func (rf *Raft) applicationTicker() {
 		rf.applyCond.Wait()
 		entries := make([]*LogEntry, 0)
 		snapPendingApply := rf.snapPending
+
 		if !snapPendingApply {
-			for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+			if rf.lastApplied < rf.log.snapLastIndex {
+				rf.lastApplied = rf.log.snapLastIndex
+			}
+
+			start := rf.lastApplied + 1
+			end := rf.commitIndex
+			if end >= rf.log.size() {
+				end = rf.log.size() - 1
+			}
+			for i := start; i <= end; i++ {
 				entries = append(entries, rf.log.at(i))
 			}
 		}

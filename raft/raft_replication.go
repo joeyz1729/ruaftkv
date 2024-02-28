@@ -69,14 +69,18 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 日志同步
 	if args.PrevLogIndex >= rf.log.size() {
-		// 日志过短
-		reply.ConflictIndex = rf.log.size()
 		reply.ConflictTerm = InvalidTerm
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, follower log too short, len: %d <= Prev:%d", args.LeaderId, rf.log.size(), args.PrevLogIndex)
+		reply.ConflictIndex = rf.log.size()
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Follower log too short, Len:%d < Prev:%d", args.LeaderId, rf.log.size(), args.PrevLogIndex)
+		return
+	}
+	if args.PrevLogIndex < rf.log.snapLastIndex {
+		reply.ConflictTerm = rf.log.snapLastTerm
+		reply.ConflictIndex = rf.log.snapLastIndex
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Follower log truncated in %d", args.LeaderId, rf.log.snapLastIndex)
 		return
 	}
 	if rf.log.at(args.PrevLogIndex).Term != args.PrevLogTerm {
-		// 日志与leader任期不匹配
 		reply.ConflictTerm = rf.log.at(args.PrevLogIndex).Term
 		reply.ConflictIndex = rf.log.firstFor(reply.ConflictTerm)
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, prev log's term not match, [%d]: T%d != T%d", args.LeaderId, rf.log.at(args.PrevLogIndex).Term, args.PrevLogTerm)
@@ -89,12 +93,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = true
 	LOG(rf.me, rf.currentTerm, DLog2, "Follower accept logs: (%d, %d]", args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
 
-	// 检查 log commit index
+	// hanle LeaderCommit
 	if args.LeaderCommit > rf.commitIndex {
 		LOG(rf.me, rf.currentTerm, DApply, "Follower update the commit index %d->%d", rf.commitIndex, args.LeaderCommit)
 		rf.commitIndex = args.LeaderCommit
 		rf.applyCond.Signal()
 	}
+
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -110,7 +115,7 @@ func (rf *Raft) getMajorityIndexLocked() int {
 	return tmpIndices[majorityIdx]
 }
 
-// startReplication 发起日志同步
+// startReplication leader向follower发起日志同步，并处理返回结果
 func (rf *Raft) startReplication(term int) bool {
 	replicateToPeer := func(peer int, args *AppendEntriesArgs) {
 		reply := &AppendEntriesReply{}
@@ -156,8 +161,14 @@ func (rf *Raft) startReplication(term int) bool {
 				rf.nextIndex[peer] = prevNextIndex
 			}
 
+			nextPrevIndex := rf.nextIndex[peer] - 1
+			nextPrevTerm := InvalidTerm
+			if nextPrevIndex >= rf.log.snapLastIndex {
+				nextPrevTerm = rf.log.at(nextPrevIndex).Term
+			}
+
 			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d",
-				peer, args.PrevLogIndex, args.PrevLogTerm, rf.nextIndex[peer]-1, rf.log.at(rf.nextIndex[peer]-1))
+				peer, args.PrevLogIndex, args.PrevLogTerm, nextPrevIndex, nextPrevTerm)
 			LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Leader log=%v", peer, rf.log.String())
 			return
 		}
@@ -202,6 +213,7 @@ func (rf *Raft) startReplication(term int) bool {
 			go rf.installToPeer(peer, term, args)
 			continue
 		}
+		// 否则日志同步
 		prevTerm := rf.log.at(prevIndex).Term
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,

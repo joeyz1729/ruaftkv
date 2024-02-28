@@ -226,7 +226,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 1
 	rf.votedFor = -1
 
-	rf.log = NewRaftLog(InvalidIndex, InvalidIndex, []byte{}, []*LogEntry{})
+	rf.log = NewRaftLog(InvalidIndex, InvalidIndex, nil, nil)
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 
