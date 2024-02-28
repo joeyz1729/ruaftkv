@@ -34,9 +34,8 @@ const (
 )
 
 const (
-	InvalidVotedFor int = -1
-	InvalidTerm     int = 0
-	InvalidIndex    int = 0
+	InvalidTerm  int = 0
+	InvalidIndex int = 0
 )
 
 type Role string
@@ -260,7 +259,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (PartA, PartB, PartC).
 	rf.role = Follower
 	rf.currentTerm = 1
-	rf.votedFor = InvalidVotedFor
+	rf.votedFor = -1
 
 	rf.log = append(rf.log, LogEntry{Term: InvalidTerm}) // 避免边界判断
 	rf.nextIndex = make([]int, len(rf.peers))

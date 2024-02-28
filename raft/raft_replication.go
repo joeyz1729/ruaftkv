@@ -103,7 +103,7 @@ func (rf *Raft) getMajorityIndexLocked() int {
 	tmpIndices := make([]int, len(rf.peers))
 	copy(tmpIndices, rf.matchIndex)
 	sort.Ints(tmpIndices)
-	majorityIdx := len(rf.peers) / 2
+	majorityIdx := (len(rf.peers) - 1) / 2
 	return tmpIndices[majorityIdx]
 }
 
@@ -124,7 +124,7 @@ func (rf *Raft) startReplication(term int) bool {
 			rf.becomeFollowerLocked(reply.Term)
 			return
 		}
-		LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d",
+		LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%v",
 			peer, args.PrevLogIndex, args.PrevLogTerm, rf.nextIndex[peer]-1, rf.log[rf.nextIndex[peer]-1])
 		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Leader log=%v", peer, rf.logString())
 
