@@ -32,6 +32,12 @@ const (
 	replicationInterval = 200 * time.Millisecond
 )
 
+const (
+	InvalidVotedFor int = -1
+	InvalidTerm     int = 0
+	InvalidIndex    int = 0
+)
+
 type Role string
 
 const (
@@ -208,6 +214,17 @@ func (rf *Raft) contextCheckLocked(role Role, term int) bool {
 	return rf.currentTerm == term && rf.role == role
 }
 
+func (rf *Raft) firstLogFor(term int) int {
+	for idx, entry := range rf.log {
+		if entry.Term == term {
+			return idx
+		} else if entry.Term > term {
+			break
+		}
+	}
+	return InvalidIndex
+}
+
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays
@@ -226,10 +243,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (PartA, PartB, PartC).
 	rf.role = Follower
-	rf.currentTerm = 0
-	rf.votedFor = -1
+	rf.currentTerm = 1
+	rf.votedFor = InvalidVotedFor
 
-	rf.log = append(rf.log, LogEntry{}) // 避免边界判断
+	rf.log = append(rf.log, LogEntry{Term: InvalidTerm}) // 避免边界判断
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 

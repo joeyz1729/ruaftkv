@@ -35,8 +35,10 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	// Your code here (PartC).
-	var currentTerm, votedFor int
-	var log []LogEntry
+	var (
+		currentTerm, votedFor int
+		log                   []LogEntry
+	)
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	if err := d.Decode(&currentTerm); err != nil {
@@ -56,6 +58,5 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	rf.log = log
-	LOG(rf.me, rf.currentTerm, DPersist, "Read from persist: %v", rf.persistString())
-
+	LOG(rf.me, rf.currentTerm, DPersist, "Read persist: %v", rf.persistString())
 }

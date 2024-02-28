@@ -25,6 +25,9 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+
+	ConflictIndex int
+	ConflictTerm  int
 }
 
 // AppendEntries 心跳以及与leader日志同步
@@ -44,15 +47,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term >= rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 	}
+	defer rf.resetElectionTimeoutLocked()
 
 	// 日志同步
 	if args.PrevLogIndex >= len(rf.log) {
-		// 日志不全
+		// 日志过短
+		reply.ConflictIndex = len(rf.log)
+		reply.ConflictTerm = InvalidTerm
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, follower log too short, len: %d <= Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		return
 	}
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		// 日志与leader任期不匹配
+		reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+		reply.ConflictIndex = rf.firstLogFor(reply.ConflictTerm)
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, prev log's term not match, [%d]: T%d != T%d", args.LeaderId, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		return
 	}
@@ -67,8 +75,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.commitIndex = args.LeaderCommit
 		rf.applyCond.Signal()
 	}
-
-	rf.resetElectionTimeoutLocked()
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -106,12 +112,26 @@ func (rf *Raft) startReplication(term int) bool {
 		}
 
 		if !reply.Success {
-			// peer的日志不全，或者任期不匹配，回退到上一任期
-			idx, term := args.PrevLogIndex, args.PrevLogTerm
-			for idx > 0 && rf.log[idx].Term == term {
-				idx--
+			prevNextIndex := rf.nextIndex[peer]
+			if reply.ConflictTerm == InvalidTerm {
+				// follower 日志过短
+				rf.nextIndex[peer] = reply.ConflictIndex
+			} else {
+				// follower 日志term不匹配
+				firstTermIndex := rf.firstLogFor(reply.ConflictTerm)
+				if firstTermIndex != InvalidIndex {
+					// 以leader为准，跳过conflictTerm的所有日志
+					rf.nextIndex[peer] = firstTermIndex + 1
+				} else {
+					// leader没有该term的日志，以follower为准
+					rf.nextIndex[peer] = reply.ConflictIndex
+				}
 			}
-			rf.nextIndex[peer] = idx + 1
+
+			if prevNextIndex < rf.nextIndex[peer] {
+				// 防止leader记录的peer nextIndex增大
+				rf.nextIndex[peer] = prevNextIndex
+			}
 			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not match at S%d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
