@@ -6,14 +6,13 @@ import (
 	"time"
 )
 
-// resetElectionTimeoutLocked 重置节点选举超时计时器
-func (rf *Raft) resetElectionTimeoutLocked() {
+// resetElectionTimerLocked 重置节点选举超时计时器
+func (rf *Raft) resetElectionTimerLocked() {
 	rf.electionStart = time.Now()
 	interval := int64(electionTimeoutUpperBound - electionTimeoutLowerBound)
 	rf.electionTimeout = electionTimeoutLowerBound + time.Duration(rand.Int63()%interval)
 }
 
-// isElectionTimeoutLocked 判断节点选举超时
 func (rf *Raft) isElectionTimeoutLocked() bool {
 	return time.Since(rf.electionStart) > rf.electionTimeout
 }
@@ -90,7 +89,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = true
 	rf.votedFor = args.CandidateId
 	rf.persistLocked()
-	rf.resetElectionTimeoutLocked()
+	rf.resetElectionTimerLocked()
 	LOG(rf.me, rf.currentTerm, DVote, "<- S%d, Vote granted", args.CandidateId)
 }
 
@@ -126,18 +125,16 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-// startElection candidate节点开始获取选票
+// startElection candidate节点开始进行选举
 func (rf *Raft) startElection(term int) {
 	votes := 0
-
 	askVoteFromPeer := func(peer int, args *RequestVoteArgs) {
 		reply := &RequestVoteReply{}
 		ok := rf.sendRequestVote(peer, args, reply)
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-
 		if !ok {
-			LOG(rf.me, rf.currentTerm, DError, "Ask vote from S%d, Lost or error", peer)
+			LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Ask vote, Lost or error", peer)
 			return
 		}
 		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, AskVote Reply=%v", peer, reply.String())
@@ -172,6 +169,7 @@ func (rf *Raft) startElection(term int) {
 			votes++
 			continue
 		}
+
 		args := &RequestVoteArgs{
 			Term:         rf.currentTerm,
 			CandidateId:  rf.me,

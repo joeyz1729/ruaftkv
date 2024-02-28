@@ -14,23 +14,20 @@ type RaftLog struct {
 }
 
 func NewRaftLog(snapLastIndex, snapLastTerm int, snapshot []byte, entries []*LogEntry) *RaftLog {
-	rl := &RaftLog{
+	return &RaftLog{
 		snapLastIndex: snapLastIndex,
 		snapLastTerm:  snapLastTerm,
 		snapshot:      snapshot,
+		tailLog: append([]*LogEntry{
+			{Term: snapLastTerm},
+		}, entries...),
 	}
-	rl.tailLog = append(rl.tailLog, &LogEntry{
-		Term: snapLastTerm,
-	})
-	rl.tailLog = append(rl.tailLog, entries...)
-	return rl
 }
 
 func (rl *RaftLog) readPersist(d *labgob.LabDecoder) error {
 	var (
 		snapLastIndex, snapLastTerm int
-		//snapshot []byte
-		entries []*LogEntry
+		entries                     []*LogEntry
 	)
 	if err := d.Decode(&snapLastIndex); err != nil {
 		return fmt.Errorf("decode last include index failed")
@@ -41,11 +38,6 @@ func (rl *RaftLog) readPersist(d *labgob.LabDecoder) error {
 		return fmt.Errorf("decode last include term failed")
 	}
 	rl.snapLastTerm = snapLastTerm
-
-	//if err := d.Decode(&snapshot); err != nil {
-	//	return fmt.Errorf("decode last include snapshot failed")
-	//}
-	//rl.snapshot = snapshot
 
 	if err := d.Decode(&entries); err != nil {
 		return fmt.Errorf("decode last include log entries failed")
@@ -76,8 +68,9 @@ func (rl *RaftLog) at(globalIdx int) *LogEntry {
 	return rl.tailLog[rl.idx(globalIdx)]
 }
 
-func (rl *RaftLog) last() (int, int) {
-	return rl.size() - 1, rl.tailLog[len(rl.tailLog)-1].Term
+func (rl *RaftLog) last() (index, term int) {
+	i := len(rl.tailLog) - 1
+	return rl.snapLastIndex + i, rl.tailLog[i].Term
 }
 
 func (rl *RaftLog) firstFor(term int) int {
@@ -137,9 +130,11 @@ func (rl *RaftLog) installSnapshot(index int, term int, snapshot []byte) {
 	rl.snapLastIndex = index
 	rl.snapLastTerm = term
 	rl.snapshot = snapshot
-	rl.tailLog = []*LogEntry{
-		{
-			Term: term,
-		},
-	}
+
+	// make a new log array
+	newLog := make([]*LogEntry, 0, 1)
+	newLog = append(newLog, &LogEntry{
+		Term: rl.snapLastTerm,
+	})
+	rl.tailLog = newLog
 }

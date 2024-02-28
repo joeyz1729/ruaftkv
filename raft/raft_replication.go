@@ -52,14 +52,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 对齐term
 	if args.Term < rf.currentTerm {
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, higher term, T%d<T%d", args.LeaderId, args.Term, rf.currentTerm)
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Higher term, T%d<T%d", args.LeaderId, args.Term, rf.currentTerm)
 		return
 	}
 	if args.Term >= rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 	}
+
 	defer func() {
-		rf.resetElectionTimeoutLocked()
+		rf.resetElectionTimerLocked()
 		if !reply.Success {
 			LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Follower Conflict: [%d]T%d", args.LeaderId, reply.ConflictIndex, reply.ConflictTerm)
 			LOG(rf.me, rf.currentTerm, DDebug, "<- S%d, Follower Log=%v", args.LeaderId, rf.log.String())
@@ -81,15 +82,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, prev log's term not match, [%d]: T%d != T%d", args.LeaderId, rf.log.at(args.PrevLogIndex).Term, args.PrevLogTerm)
 		return
 	}
-	rf.log.appendFrom(args.PrevLogIndex, args.Entries...)
 
+	// 同步日志
+	rf.log.appendFrom(args.PrevLogIndex, args.Entries...)
 	rf.persistLocked()
 	reply.Success = true
 	LOG(rf.me, rf.currentTerm, DLog2, "Follower accept logs: (%d, %d]", args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
 
 	// 检查 log commit index
 	if args.LeaderCommit > rf.commitIndex {
-		LOG(rf.me, rf.currentTerm, DApply, "Update commit index %d->%d", rf.commitIndex, args.LeaderCommit)
+		LOG(rf.me, rf.currentTerm, DApply, "Follower update the commit index %d->%d", rf.commitIndex, args.LeaderCommit)
 		rf.commitIndex = args.LeaderCommit
 		rf.applyCond.Signal()
 	}
@@ -110,9 +112,10 @@ func (rf *Raft) getMajorityIndexLocked() int {
 
 // startReplication 发起日志同步
 func (rf *Raft) startReplication(term int) bool {
-	replicationToPeer := func(peer int, args *AppendEntriesArgs) {
-		reply := AppendEntriesReply{}
-		ok := rf.sendAppendEntries(peer, args, &reply)
+	replicateToPeer := func(peer int, args *AppendEntriesArgs) {
+		reply := &AppendEntriesReply{}
+		ok := rf.sendAppendEntries(peer, args, reply)
+
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 		if !ok {
@@ -165,7 +168,7 @@ func (rf *Raft) startReplication(term int) bool {
 		// 更新leader commit log index
 		majorityMatched := rf.getMajorityIndexLocked()
 		if majorityMatched > rf.commitIndex && rf.log.at(majorityMatched).Term == rf.currentTerm {
-			LOG(rf.me, rf.currentTerm, DApply, "Leader Update commit index %d->%d", rf.commitIndex, majorityMatched)
+			LOG(rf.me, rf.currentTerm, DApply, "Leader update the commit index %d->%d", rf.commitIndex, majorityMatched)
 			rf.commitIndex = majorityMatched
 			rf.applyCond.Signal()
 		}
@@ -205,11 +208,11 @@ func (rf *Raft) startReplication(term int) bool {
 			LeaderId:     rf.me,
 			PrevLogIndex: prevIndex,
 			PrevLogTerm:  prevTerm,
-			Entries:      rf.log.tail(prevIndex + 1), // 防止竞争
+			Entries:      rf.log.tail(prevIndex + 1),
 			LeaderCommit: rf.commitIndex,
 		}
 		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Append, Args=%v", peer, args.String())
-		go replicationToPeer(peer, args)
+		go replicateToPeer(peer, args)
 	}
 	return true
 }
