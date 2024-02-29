@@ -50,33 +50,12 @@ func (kv *ShardKV) applyTask() {
 	}
 }
 
-func (kv *ShardKV) applyToStateMachine(op Op) *OpReply {
-	var (
-		value string
-		err   Err
-	)
-	switch op.OpType {
-	case OpGet:
-		value, err = kv.stateMachine.Get(op.Key)
-	case OpPut:
-		err = kv.stateMachine.Put(op.Key, op.Value)
-	case OpAppend:
-		err = kv.stateMachine.Append(op.Key, op.Value)
-	default:
-	}
-	return &OpReply{
-		Value: value,
-		Err:   err,
-	}
-
-}
-
 func (kv *ShardKV) fetchConfigTask() {
 	kv.mu.Lock()
 	for !kv.killed() {
 		newConfig := kv.mck.Query(-1)
 		kv.currentConfig = newConfig
 		kv.mu.Unlock()
-		time.Sleep(FetchConfigTimeout)
+		time.Sleep(FetchConfigInterval)
 	}
 }

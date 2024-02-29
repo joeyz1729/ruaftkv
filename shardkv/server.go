@@ -19,7 +19,7 @@ type ShardKV struct {
 	applyCh      chan raft.ApplyMsg
 	make_end     func(string) *labrpc.ClientEnd
 	gid          int
-	masters      []*labrpc.ClientEnd
+	ctrlers      []*labrpc.ClientEnd
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
@@ -37,16 +37,13 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// 判断Shard Group
 	kv.mu.Lock()
 	if !kv.matchGroup(args.Key) {
-		reply.Err = ErrWrongLeader
+		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
 		return
 	}
 	kv.mu.Unlock()
 
-	index, _, isLeader := kv.rf.Start(Op{
-		Key:    args.Key,
-		OpType: OpGet,
-	})
+	index, _, isLeader := kv.rf.Start(Op{Key: args.Key, OpType: OpGet})
 
 	// follower节点不处理请求
 	if !isLeader {
@@ -71,7 +68,6 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		kv.removeNotifyChannel(index)
 		kv.mu.Unlock()
 	}()
-	return
 }
 
 func (kv *ShardKV) matchGroup(key string) bool {
@@ -87,7 +83,17 @@ func (kv *ShardKV) requestDuplicated(clientId, seqId int64) bool {
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	kv.mu.Lock()
+
+	// 判断请求 key 是否所属当前 Group
+	if !kv.matchGroup(args.Key) {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+
+	// 判断请求是否重复
 	if kv.requestDuplicated(args.ClientId, args.SeqId) {
+		// 如果是重复请求，直接返回结果
 		opReply := kv.duplicateTable[args.ClientId].Reply
 		reply.Err = opReply.Err
 		kv.mu.Unlock()
@@ -123,7 +129,6 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		kv.removeNotifyChannel(index)
 		kv.mu.Unlock()
 	}()
-	return
 }
 
 func (kv *ShardKV) Kill() {
@@ -137,7 +142,7 @@ func (kv *ShardKV) killed() bool {
 	return z == 1
 }
 
-func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
@@ -147,9 +152,16 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.maxraftstate = maxraftstate
 	kv.make_end = make_end
 	kv.gid = gid
-	kv.masters = masters
+	kv.ctrlers = ctrlers
 
 	// Your initialization code here.
+
+	// Use something like this to talk to the shardctrler:
+	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+
 	kv.dead = 0
 	kv.lastApplied = 0
 	kv.stateMachine = NewMemoryKVStateMachine()
@@ -157,14 +169,26 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.duplicateTable = make(map[int64]*LastOperationInfo)
 	kv.currentConfig = shardctrler.DefaultConfig()
 
-	// Use something like this to talk to the shardmaster:
-	kv.mck = shardctrler.MakeClerk(kv.masters)
+	// 从 snapshot 中恢复状态
+	kv.restoreFromSnapshot(persister.ReadSnapshot())
 
-	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	go kv.applyTask()
 	go kv.fetchConfigTask()
-
 	return kv
+}
+
+func (kv *ShardKV) applyToStateMachine(op Op) *OpReply {
+	var value string
+	var err Err
+	switch op.OpType {
+	case OpGet:
+		value, err = kv.stateMachine.Get(op.Key)
+	case OpPut:
+		err = kv.stateMachine.Put(op.Key, op.Value)
+	case OpAppend:
+		err = kv.stateMachine.Append(op.Key, op.Value)
+	}
+	return &OpReply{Value: value, Err: err}
 }
 
 func (kv *ShardKV) getNotifyChannel(index int) chan *OpReply {
@@ -190,16 +214,15 @@ func (kv *ShardKV) restoreFromSnapshot(snapshot []byte) {
 	if len(snapshot) == 0 {
 		return
 	}
+
 	buf := bytes.NewBuffer(snapshot)
 	dec := labgob.NewDecoder(buf)
-	var (
-		stateMachine *MemoryKVStateMachine
-		dupTable     map[int64]*LastOperationInfo
-	)
+	var stateMachine MemoryKVStateMachine
+	var dupTable map[int64]*LastOperationInfo
 	if dec.Decode(&stateMachine) != nil || dec.Decode(&dupTable) != nil {
-		panic("failed to restore state from snapshot, decode err")
+		panic("failed to restore state from snapshpt")
 	}
-	kv.stateMachine = stateMachine
-	kv.duplicateTable = dupTable
 
+	kv.stateMachine = &stateMachine
+	kv.duplicateTable = dupTable
 }
