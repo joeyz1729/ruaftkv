@@ -20,9 +20,10 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	lastApplied  int
-	stateMachine *MemoryKVStateMachine
-	notifyChans  map[int]chan *OpReply
+	lastApplied    int
+	stateMachine   *MemoryKVStateMachine
+	notifyChans    map[int]chan *OpReply
+	duplicateTable map[int64]*LastOperationInfo
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -58,12 +59,28 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	return
 }
 
+func (kv *KVServer) requestDuplicated(clientId, seqId int64) bool {
+	info, ok := kv.duplicateTable[clientId]
+	return ok && seqId <= info.SeqId
+}
+
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	kv.mu.Lock()
+	if kv.requestDuplicated(args.ClientId, args.SeqId) {
+		opReply := kv.duplicateTable[args.ClientId].Reply
+		reply.Err = opReply.Err
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
 	index, _, isLeader := kv.rf.Start(Op{
-		Key:    args.Key,
-		Value:  args.Value,
-		OpType: getOperationType(args.Op),
+		Key:      args.Key,
+		Value:    args.Value,
+		OpType:   getOperationType(args.Op),
+		ClientId: args.ClientId,
+		SeqId:    args.SeqId,
 	})
 
 	// follower节点不处理请求
@@ -139,6 +156,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.lastApplied = 0
 	kv.stateMachine = NewMemoryKVStateMachine()
 	kv.notifyChans = make(map[int]chan *OpReply)
+	kv.duplicateTable = make(map[int64]*LastOperationInfo)
 
 	go kv.applyTask()
 
@@ -158,7 +176,21 @@ func (kv *KVServer) applyTask() {
 				}
 				kv.lastApplied = message.CommandIndex
 				op := message.Command.(Op)
-				reply := kv.applyToStateMachine(op)
+				var reply = new(OpReply)
+
+				// 判断操作是否重复
+				if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
+					reply = kv.duplicateTable[op.ClientId].Reply
+				} else {
+					reply = kv.applyToStateMachine(op)
+					if op.OpType != OpGet {
+						// 保存去重信息
+						kv.duplicateTable[op.ClientId] = &LastOperationInfo{
+							SeqId: op.SeqId,
+							Reply: reply,
+						}
+					}
+				}
 				if _, isLeader := kv.rf.GetState(); isLeader {
 					notifyCh := kv.getNotifyChannel(message.SnapshotIndex)
 					notifyCh <- reply
