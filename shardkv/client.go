@@ -105,8 +105,6 @@ func (ck *Clerk) Get(key string) string {
 	}
 }
 
-// PutAppend shared by Put and Append.
-// You will have to modify this function.
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args := PutAppendArgs{}
 	args.Key = key
