@@ -1,29 +1,14 @@
 package kvraft
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/joeyz1729/ruaftkv/labgob"
 	"github.com/joeyz1729/ruaftkv/labrpc"
 	"github.com/joeyz1729/ruaftkv/raft"
 )
-
-const Debug = 0
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug > 0 {
-		log.Printf(format, a...)
-	}
-	return
-}
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-}
 
 type KVServer struct {
 	mu      sync.Mutex
@@ -35,17 +20,69 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	lastApplied  int
+	stateMachine *MemoryKVStateMachine
+	notifyChans  map[int]chan *OpReply
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	index, _, isLeader := kv.rf.Start(Op{
+		Key:    args.Key,
+		OpType: OpGet,
+	})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+	}
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChannel(index)
+	kv.mu.Unlock()
+
+	select {
+	case result := <-notifyCh:
+		reply.Value = result.Value
+		reply.Err = result.Err
+	case <-time.After(ClientRequestTimeout):
+		reply.Err = ErrTimeout
+	}
+
+	go func() {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+		kv.removeNotifyChannel(index)
+	}()
+	return
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	index, _, isLeader := kv.rf.Start(Op{
+		Key:    args.Key,
+		Value:  args.Value,
+		OpType: getOperationType(args.Op),
+	})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+	}
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChannel(index)
+	kv.mu.Unlock()
+
+	select {
+	case result := <-notifyCh:
+		reply.Err = result.Err
+	case <-time.After(ClientRequestTimeout):
+		reply.Err = ErrTimeout
+	}
+	go func() {
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
+		kv.removeNotifyChannel(index)
+	}()
+	return
 }
 
-// the tester calls Kill() when a KVServer instance won't
+// Kill the tester calls Kill() when a KVServer instance won't
 // be needed again. for your convenience, we supply
 // code to set rf.dead (without needing a lock),
 // and a killed() method to test rf.dead in
@@ -64,7 +101,7 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
-// servers[] contains the ports of the set of
+// StartKVServer servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
 // form the fault-tolerant key/value service.
 // me is the index of the current server in servers[].
@@ -91,6 +128,67 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.dead = 0
+	kv.lastApplied = 0
+	kv.stateMachine = NewMemoryKVStateMachine()
+
+	go kv.applyTask()
 
 	return kv
+}
+
+// applyTask handle apply task
+func (kv *KVServer) applyTask() {
+	for !kv.killed() {
+		select {
+		case message := <-kv.applyCh:
+			if message.CommandValid {
+				kv.mu.Lock()
+				if message.CommandIndex <= kv.lastApplied {
+					kv.mu.Unlock()
+					continue
+				}
+				kv.lastApplied = message.CommandIndex
+				op := message.Command.(Op)
+				reply := kv.applyToStateMachine(op)
+				if _, isLeader := kv.rf.GetState(); isLeader {
+					notifyCh := kv.getNotifyChannel(message.SnapshotIndex)
+					notifyCh <- reply
+				}
+				kv.mu.Unlock()
+			}
+		}
+	}
+}
+
+func (kv *KVServer) applyToStateMachine(op Op) *OpReply {
+	var (
+		value string
+		err   Err
+	)
+	switch op.OpType {
+	case OpGet:
+		value, err = kv.stateMachine.Get(op.Key)
+	case OpPut:
+		err = kv.stateMachine.Put(op.Key, op.Value)
+	case OpAppend:
+		err = kv.stateMachine.Append(op.Key, op.Value)
+	default:
+	}
+	return &OpReply{
+		Value: value,
+		Err:   err,
+	}
+
+}
+
+func (kv *KVServer) getNotifyChannel(index int) chan *OpReply {
+	if _, ok := kv.notifyChans[index]; !ok {
+		kv.notifyChans[index] = make(chan *OpReply)
+	}
+	return kv.notifyChans[index]
+}
+
+func (kv *KVServer) removeNotifyChannel(index int) {
+	delete(kv.notifyChans, index)
 }

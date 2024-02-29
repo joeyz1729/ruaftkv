@@ -1,5 +1,21 @@
 package kvraft
 
+import (
+	"fmt"
+	"log"
+	"time"
+)
+
+const Debug = 0
+
+const ClientRequestTimeout = 500 * time.Millisecond
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug > 0 {
+		log.Printf(format, a...)
+	}
+}
+
 const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
@@ -31,4 +47,40 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key    string
+	Value  string
+	OpType OperationType
+}
+
+type OpReply struct {
+	Value string
+	Err   Err
+}
+
+type OperationType uint8
+
+const (
+	OpGet OperationType = iota
+	OpPut
+	OpAppend
+)
+
+func getOperationType(v string) OperationType {
+	switch v {
+	case "Get":
+		return OpGet
+	case "Put":
+		return OpPut
+	case "Append":
+		return OpAppend
+	default:
+		panic(fmt.Sprintf("invalid operation type: %s", v))
+	}
+
 }
