@@ -31,9 +31,13 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		Key:    args.Key,
 		OpType: OpGet,
 	})
+
+	// follower节点不处理请求
 	if !isLeader {
 		reply.Err = ErrWrongLeader
+		return
 	}
+
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
 	kv.mu.Unlock()
@@ -48,8 +52,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 	go func() {
 		kv.mu.Lock()
-		defer kv.mu.Unlock()
 		kv.removeNotifyChannel(index)
+		kv.mu.Unlock()
 	}()
 	return
 }
@@ -61,8 +65,11 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		Value:  args.Value,
 		OpType: getOperationType(args.Op),
 	})
+
+	// follower节点不处理请求
 	if !isLeader {
 		reply.Err = ErrWrongLeader
+		return
 	}
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
@@ -76,8 +83,8 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	go func() {
 		kv.mu.Lock()
-		defer kv.mu.Unlock()
 		kv.removeNotifyChannel(index)
+		kv.mu.Unlock()
 	}()
 	return
 }
@@ -131,6 +138,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.dead = 0
 	kv.lastApplied = 0
 	kv.stateMachine = NewMemoryKVStateMachine()
+	kv.notifyChans = make(map[int]chan *OpReply)
 
 	go kv.applyTask()
 
@@ -184,7 +192,7 @@ func (kv *KVServer) applyToStateMachine(op Op) *OpReply {
 
 func (kv *KVServer) getNotifyChannel(index int) chan *OpReply {
 	if _, ok := kv.notifyChans[index]; !ok {
-		kv.notifyChans[index] = make(chan *OpReply)
+		kv.notifyChans[index] = make(chan *OpReply, 1)
 	}
 	return kv.notifyChans[index]
 }
