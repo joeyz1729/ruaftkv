@@ -1,5 +1,7 @@
 package shardctrler
 
+import "fmt"
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -79,4 +81,49 @@ type QueryReply struct {
 	WrongLeader bool
 	Err         Err
 	Config      Config
+}
+
+type Op struct {
+	Servers  map[int][]string // join
+	GIDs     []int            // leave
+	Shard    int              // move
+	GID      int              // move
+	Num      int              // query
+	OpType   OperationType
+	ClientId int64
+	SeqId    int64
+}
+
+type OpReply struct {
+	ControllerConfig Config
+	Err              Err
+}
+
+type OperationType uint8
+
+const (
+	OpJoin OperationType = iota
+	OpLeave
+	OpMove
+	OpQuery
+)
+
+func getOperationType(v string) OperationType {
+	switch v {
+	case "Join":
+		return OpJoin
+	case "Leave":
+		return OpLeave
+	case "Move":
+		return OpMove
+	case "Query":
+		return OpQuery
+	default:
+		panic(fmt.Sprintf("invalid operation type: %s", v))
+	}
+}
+
+type LastOperationInfo struct {
+	SeqId int64
+	Reply *OpReply
 }
