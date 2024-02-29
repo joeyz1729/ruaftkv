@@ -10,10 +10,6 @@ import (
 	"github.com/joeyz1729/ruaftkv/raft"
 )
 
-const (
-	ClientRequestTimeout = 500 * time.Millisecond
-)
-
 type ShardCtrler struct {
 	mu      sync.Mutex
 	me      int
@@ -23,11 +19,17 @@ type ShardCtrler struct {
 	// Your data here.
 	dead           int32 // set by Kill()
 	lastApplied    int
-	stateMachine   *MemoryKVStateMachine
+	stateMachine   *CtrlerStateMachine
 	notifyChans    map[int]chan *OpReply
 	duplicateTable map[int64]*LastOperationInfo
 
 	configs []Config // indexed by config num
+}
+
+func (sc *ShardCtrler) requestDuplicated(clientId, seqId int64) bool {
+	info, ok := sc.duplicateTable[clientId]
+	return ok && seqId <= info.SeqId
+
 }
 
 // Join 添加
@@ -164,7 +166,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	// Your code here.
 	sc.dead = 0
 	sc.lastApplied = 0
-	sc.stateMachine = NewMemoryKVStateMachine()
+	sc.stateMachine = NewCtrlerStateMachine()
 	sc.notifyChans = make(map[int]chan *OpReply)
 	sc.duplicateTable = make(map[int64]*LastOperationInfo)
 
@@ -216,24 +218,26 @@ func (sc *ShardCtrler) applyTask() {
 }
 
 func (sc *ShardCtrler) applyToStateMachine(op Op) *OpReply {
-	//var (
-	//	value string
-	//	err   Err
-	//)
-	//switch op.OpType {
-	//case OpGet:
-	//	value, err = sc.stateMachine.Get(op.Key)
-	//case OpPut:
-	//	err = sc.stateMachine.Put(op.Key, op.Value)
-	//case OpAppend:
-	//	err = sc.stateMachine.Append(op.Key, op.Value)
-	//default:
-	//}
-	//return &OpReply{
-	//	Value: value,
-	//	Err:   err,
-	//}
-	return nil
+	var (
+		conf Config
+		err  Err
+	)
+	switch op.OpType {
+	case OpQuery:
+		conf, err = sc.stateMachine.Query(op.Num)
+	case OpJoin:
+		err = sc.stateMachine.Join(op.Servers)
+	case OpLeave:
+		err = sc.stateMachine.Leave(op.GIDs)
+	case OpMove:
+		err = sc.stateMachine.Move(op.Shard, op.GID)
+
+	default:
+	}
+	return &OpReply{
+		ControllerConfig: conf,
+		Err:              err,
+	}
 }
 
 func (sc *ShardCtrler) getNotifyChannel(index int) chan *OpReply {
@@ -245,10 +249,4 @@ func (sc *ShardCtrler) getNotifyChannel(index int) chan *OpReply {
 
 func (sc *ShardCtrler) removeNotifyChannel(index int) {
 	delete(sc.notifyChans, index)
-}
-
-func (sc *ShardCtrler) requestDuplicated(clientId, seqId int64) bool {
-	info, ok := sc.duplicateTable[clientId]
-	return ok && seqId <= info.SeqId
-
 }

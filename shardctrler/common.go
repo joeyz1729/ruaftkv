@@ -1,6 +1,9 @@
 package shardctrler
 
-import "fmt"
+import (
+	"log"
+	"time"
+)
 
 //
 // Shard controler: assigns shards to replication groups.
@@ -28,6 +31,12 @@ type Config struct {
 	Num    int              // config number
 	Shards [NShards]int     // shard -> gid
 	Groups map[int][]string // gid -> servers[]
+}
+
+func DefaultConfig() Config {
+	return Config{
+		Groups: make(map[int][]string),
+	}
 }
 
 const (
@@ -83,6 +92,17 @@ type QueryReply struct {
 	Config      Config
 }
 
+const ClientRequestTimeout = 500 * time.Millisecond
+
+const Debug = false
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug {
+		log.Printf(format, a...)
+	}
+	return
+}
+
 type Op struct {
 	Servers  map[int][]string // join
 	GIDs     []int            // leave
@@ -107,21 +127,6 @@ const (
 	OpMove
 	OpQuery
 )
-
-func getOperationType(v string) OperationType {
-	switch v {
-	case "Join":
-		return OpJoin
-	case "Leave":
-		return OpLeave
-	case "Move":
-		return OpMove
-	case "Query":
-		return OpQuery
-	default:
-		panic(fmt.Sprintf("invalid operation type: %s", v))
-	}
-}
 
 type LastOperationInfo struct {
 	SeqId int64
