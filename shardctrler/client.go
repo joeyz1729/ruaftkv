@@ -32,7 +32,6 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.leaderId = 0
 	ck.clientId = nrand()
 	ck.seqId = 0
-
 	return ck
 }
 
@@ -53,15 +52,11 @@ func (ck *Clerk) Query(num int) Config {
 }
 
 func (ck *Clerk) Join(servers map[int][]string) {
-	args := &JoinArgs{
-		ClientId: ck.clientId,
-		SeqId:    ck.seqId,
-	}
+	args := &JoinArgs{ClientId: ck.clientId, SeqId: ck.seqId}
 	// Your code here.
 	args.Servers = servers
 
 	for {
-		// try each known server.
 		var reply JoinReply
 		ok := ck.servers[ck.leaderId].Call("ShardCtrler.Join", args, &reply)
 		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
@@ -74,10 +69,7 @@ func (ck *Clerk) Join(servers map[int][]string) {
 }
 
 func (ck *Clerk) Leave(gids []int) {
-	args := &LeaveArgs{
-		ClientId: ck.clientId,
-		SeqId:    ck.seqId,
-	}
+	args := &LeaveArgs{ClientId: ck.clientId, SeqId: ck.seqId}
 	// Your code here.
 	args.GIDs = gids
 
@@ -95,10 +87,7 @@ func (ck *Clerk) Leave(gids []int) {
 }
 
 func (ck *Clerk) Move(shard int, gid int) {
-	args := &MoveArgs{
-		ClientId: ck.clientId,
-		SeqId:    ck.seqId,
-	}
+	args := &MoveArgs{ClientId: ck.clientId, SeqId: ck.seqId}
 	// Your code here.
 	args.Shard = shard
 	args.GID = gid

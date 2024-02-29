@@ -22,10 +22,10 @@ import (
 // You will need to add fields to the RPC argument structs.
 //
 
-// The number of shards.
+// NShards The number of shards.
 const NShards = 10
 
-// A configuration -- an assignment of shards to groups.
+// Config A configuration -- an assignment of shards to groups.
 // Please don't change this.
 type Config struct {
 	Num    int              // config number
@@ -104,11 +104,14 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 type Op struct {
-	Servers  map[int][]string // join
-	GIDs     []int            // leave
-	Shard    int              // move
-	GID      int              // move
-	Num      int              // query
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Servers  map[int][]string // new GID -> servers mappings  -- for Join
+	GIDs     []int            // -- for Leave
+	Shard    int              // -- for Move
+	GID      int              // -- for Move
+	Num      int              // desired config number -- for Query
 	OpType   OperationType
 	ClientId int64
 	SeqId    int64

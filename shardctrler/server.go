@@ -17,82 +17,74 @@ type ShardCtrler struct {
 	applyCh chan raft.ApplyMsg
 
 	// Your data here.
+
+	configs []Config // indexed by config num
+
 	dead           int32 // set by Kill()
 	lastApplied    int
 	stateMachine   *CtrlerStateMachine
 	notifyChans    map[int]chan *OpReply
 	duplicateTable map[int64]*LastOperationInfo
-
-	configs []Config // indexed by config num
 }
 
 func (sc *ShardCtrler) requestDuplicated(clientId, seqId int64) bool {
 	info, ok := sc.duplicateTable[clientId]
 	return ok && seqId <= info.SeqId
-
 }
 
-// Join 添加
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	// Your code here.
-	var opReply = &OpReply{}
-	sc.command(&Op{
+	var opReply OpReply
+	sc.command(Op{
 		OpType:   OpJoin,
 		ClientId: args.ClientId,
 		SeqId:    args.SeqId,
 		Servers:  args.Servers,
-	}, opReply)
+	}, &opReply)
 
 	reply.Err = opReply.Err
-
 }
 
-// Leave 删除
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	// Your code here.
-	var opReply = &OpReply{}
-	sc.command(&Op{
+	var opReply OpReply
+	sc.command(Op{
 		OpType:   OpLeave,
 		ClientId: args.ClientId,
 		SeqId:    args.SeqId,
 		GIDs:     args.GIDs,
-	}, opReply)
+	}, &opReply)
 
 	reply.Err = opReply.Err
-
 }
 
-// Move 移动
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	// Your code here.
-	var opReply = &OpReply{}
-	sc.command(&Op{
+	var opReply OpReply
+	sc.command(Op{
 		OpType:   OpMove,
 		ClientId: args.ClientId,
 		SeqId:    args.SeqId,
 		Shard:    args.Shard,
 		GID:      args.GID,
-	}, opReply)
+	}, &opReply)
 
 	reply.Err = opReply.Err
-
 }
 
-// Query 请求
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	// Your code here.
-	var opReply = &OpReply{}
-	sc.command(&Op{
+	var opReply OpReply
+	sc.command(Op{
 		OpType: OpQuery,
 		Num:    args.Num,
-	}, opReply)
+	}, &opReply)
 
 	reply.Config = opReply.ControllerConfig
 	reply.Err = opReply.Err
-
 }
 
-func (sc *ShardCtrler) command(args *Op, reply *OpReply) {
+func (sc *ShardCtrler) command(args Op, reply *OpReply) {
 	sc.mu.Lock()
 	if args.OpType != OpQuery && sc.requestDuplicated(args.ClientId, args.SeqId) {
 		opReply := sc.duplicateTable[args.ClientId].Reply
@@ -125,7 +117,6 @@ func (sc *ShardCtrler) command(args *Op, reply *OpReply) {
 		sc.removeNotifyChannel(index)
 		sc.mu.Unlock()
 	}()
-
 }
 
 // Kill the tester calls Kill() when a ShardCtrler instance won't
@@ -143,7 +134,7 @@ func (sc *ShardCtrler) killed() bool {
 	return z == 1
 }
 
-// needed by shardkv tester
+// Raft needed by shardkv tester
 func (sc *ShardCtrler) Raft() *raft.Raft {
 	return sc.rf
 }
@@ -174,7 +165,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	return sc
 }
 
-// applyTask handle apply task
+// 处理 apply 任务
 func (sc *ShardCtrler) applyTask() {
 	for !sc.killed() {
 		select {
@@ -186,31 +177,26 @@ func (sc *ShardCtrler) applyTask() {
 					continue
 				}
 				sc.lastApplied = message.CommandIndex
-				op := message.Command.(Op)
-				var reply = new(OpReply)
 
-				// 判断操作是否重复
+				op := message.Command.(Op)
+				var opReply *OpReply
 				if op.OpType != OpQuery && sc.requestDuplicated(op.ClientId, op.SeqId) {
-					reply = sc.duplicateTable[op.ClientId].Reply
+					opReply = sc.duplicateTable[op.ClientId].Reply
 				} else {
-					reply = sc.applyToStateMachine(op)
+					opReply = sc.applyToStateMachine(op)
 					if op.OpType != OpQuery {
-						// 保存去重信息
 						sc.duplicateTable[op.ClientId] = &LastOperationInfo{
 							SeqId: op.SeqId,
-							Reply: reply,
+							Reply: opReply,
 						}
 					}
 				}
+
 				if _, isLeader := sc.rf.GetState(); isLeader {
 					notifyCh := sc.getNotifyChannel(message.CommandIndex)
-					notifyCh <- reply
+					notifyCh <- opReply
 				}
 
-				sc.mu.Unlock()
-			} else if message.SnapshotValid {
-				sc.mu.Lock()
-				sc.lastApplied = message.SnapshotIndex
 				sc.mu.Unlock()
 			}
 		}
@@ -218,26 +204,19 @@ func (sc *ShardCtrler) applyTask() {
 }
 
 func (sc *ShardCtrler) applyToStateMachine(op Op) *OpReply {
-	var (
-		conf Config
-		err  Err
-	)
+	var err Err
+	var cfg Config
 	switch op.OpType {
 	case OpQuery:
-		conf, err = sc.stateMachine.Query(op.Num)
+		cfg, err = sc.stateMachine.Query(op.Num)
 	case OpJoin:
 		err = sc.stateMachine.Join(op.Servers)
 	case OpLeave:
 		err = sc.stateMachine.Leave(op.GIDs)
 	case OpMove:
 		err = sc.stateMachine.Move(op.Shard, op.GID)
-
-	default:
 	}
-	return &OpReply{
-		ControllerConfig: conf,
-		Err:              err,
-	}
+	return &OpReply{ControllerConfig: cfg, Err: err}
 }
 
 func (sc *ShardCtrler) getNotifyChannel(index int) chan *OpReply {

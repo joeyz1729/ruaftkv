@@ -1,31 +1,29 @@
 package shardctrler
 
-import (
-	"sort"
-)
+import "sort"
 
 type CtrlerStateMachine struct {
 	Configs []Config
 }
 
 func NewCtrlerStateMachine() *CtrlerStateMachine {
-	cf := &CtrlerStateMachine{
-		Configs: make([]Config, 1),
-	}
+	cf := &CtrlerStateMachine{Configs: make([]Config, 1)}
 	cf.Configs[0] = DefaultConfig()
 	return cf
 }
 
-func (sm *CtrlerStateMachine) Query(num int) (Config, Err) {
-	if num < 0 || num > len(sm.Configs) {
-		return sm.Configs[len(sm.Configs)-1], OK
+func (csm *CtrlerStateMachine) Query(num int) (Config, Err) {
+	if num < 0 || num >= len(csm.Configs) {
+		return csm.Configs[len(csm.Configs)-1], OK
 	}
-	return sm.Configs[num], OK
+	return csm.Configs[num], OK
 }
 
-func (sm *CtrlerStateMachine) Join(groups map[int][]string) Err {
-	num := len(sm.Configs)
-	lastConfig := sm.Configs[num-1]
+// Join 加入新的 Group 到集群中，需要处理加入之后的负载均衡问题
+func (csm *CtrlerStateMachine) Join(groups map[int][]string) Err {
+	num := len(csm.Configs)
+	lastConfig := csm.Configs[num-1]
+	// 构建新的配置
 	newConfig := Config{
 		Num:    num,
 		Shards: lastConfig.Shards,
@@ -67,13 +65,14 @@ func (sm *CtrlerStateMachine) Join(groups map[int][]string) Err {
 		}
 	}
 	newConfig.Shards = newShards
-	sm.Configs = append(sm.Configs, newConfig)
+	csm.Configs = append(csm.Configs, newConfig)
+
 	return OK
 }
 
-func (sm *CtrlerStateMachine) Leave(gids []int) Err {
-	num := len(sm.Configs)
-	lastConfig := sm.Configs[num-1]
+func (csm *CtrlerStateMachine) Leave(gids []int) Err {
+	num := len(csm.Configs)
+	lastConfig := csm.Configs[num-1]
 	newConfig := Config{
 		Num:    num,
 		Shards: lastConfig.Shards,
@@ -102,8 +101,6 @@ func (sm *CtrlerStateMachine) Leave(gids []int) Err {
 	}
 
 	var newShards [NShards]int
-
-	// 重新分配shard
 	if len(newConfig.Groups) != 0 {
 		for _, shard := range unassignedShards {
 			minGid := gidWithMinimumShards(gidToShards)
@@ -116,22 +113,24 @@ func (sm *CtrlerStateMachine) Leave(gids []int) Err {
 			}
 		}
 	}
+
 	newConfig.Shards = newShards
+	csm.Configs = append(csm.Configs, newConfig)
 	return OK
 }
 
-func (sm *CtrlerStateMachine) Move(shardId, gid int) Err {
-	num := len(sm.Configs)
-	lastConfig := sm.Configs[num-1]
+func (csm *CtrlerStateMachine) Move(shardid, gid int) Err {
+	num := len(csm.Configs)
+	lastConfig := csm.Configs[num-1]
 	newConfig := Config{
 		Num:    num,
 		Shards: lastConfig.Shards,
 		Groups: copyGroups(lastConfig.Groups),
 	}
-	newConfig.Shards[shardId] = gid
-	sm.Configs = append(sm.Configs, newConfig)
-	return OK
 
+	newConfig.Shards[shardid] = gid
+	csm.Configs = append(csm.Configs, newConfig)
+	return OK
 }
 
 func copyGroups(groups map[int][]string) map[int][]string {
@@ -164,10 +163,6 @@ func gidWithMaximumShards(gidToShards map[int][]int) int {
 }
 
 func gidWithMinimumShards(gidToShards map[int][]int) int {
-	if shard, ok := gidToShards[0]; ok && len(shard) > 0 {
-		return 0
-	}
-
 	var gids []int
 	for gid := range gidToShards {
 		gids = append(gids, gid)
