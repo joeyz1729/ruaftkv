@@ -192,7 +192,7 @@ func (kv *KVServer) applyTask() {
 					}
 				}
 				if _, isLeader := kv.rf.GetState(); isLeader {
-					notifyCh := kv.getNotifyChannel(message.SnapshotIndex)
+					notifyCh := kv.getNotifyChannel(message.CommandIndex)
 					notifyCh <- reply
 				}
 				kv.mu.Unlock()
