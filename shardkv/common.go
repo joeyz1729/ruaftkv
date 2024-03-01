@@ -21,6 +21,7 @@ const (
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrTimeout     = "ErrTimeout"
+	ErrWrongConfig = "ErrWrongConfig"
 )
 
 type Err string
@@ -101,4 +102,16 @@ func getOperationType(v string) OperationType {
 type LastOperationInfo struct {
 	SeqId int64
 	Reply *OpReply
+}
+
+const (
+	ClientOperation RaftCommandType = iota
+	ConfigChange
+)
+
+type RaftCommandType uint8
+
+type RaftCommand struct {
+	CmdType RaftCommandType
+	Data    interface{}
 }

@@ -25,7 +25,7 @@ type ShardKV struct {
 	// Your definitions here.
 	dead           int32
 	lastApplied    int
-	stateMachine   *MemoryKVStateMachine
+	shards         map[int]*MemoryKVStateMachine
 	notifyChans    map[int]chan *OpReply
 	duplicateTable map[int64]*LastOperationInfo
 	currentConfig  shardctrler.Config
@@ -43,7 +43,10 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	}
 	kv.mu.Unlock()
 
-	index, _, isLeader := kv.rf.Start(Op{Key: args.Key, OpType: OpGet})
+	index, _, isLeader := kv.rf.Start(RaftCommand{
+		CmdType: ClientOperation,
+		Data:    Op{Key: args.Key, OpType: OpGet},
+	})
 
 	// follower节点不处理请求
 	if !isLeader {
@@ -100,13 +103,15 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	kv.mu.Unlock()
-
-	index, _, isLeader := kv.rf.Start(Op{
-		Key:      args.Key,
-		Value:    args.Value,
-		OpType:   getOperationType(args.Op),
-		ClientId: args.ClientId,
-		SeqId:    args.SeqId,
+	index, _, isLeader := kv.rf.Start(RaftCommand{
+		CmdType: ClientOperation,
+		Data: Op{
+			Key:      args.Key,
+			Value:    args.Value,
+			OpType:   getOperationType(args.Op),
+			ClientId: args.ClientId,
+			SeqId:    args.SeqId,
+		},
 	})
 
 	// follower节点不处理请求
@@ -164,7 +169,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	kv.dead = 0
 	kv.lastApplied = 0
-	kv.stateMachine = NewMemoryKVStateMachine()
+	kv.shards = make(map[int]*MemoryKVStateMachine)
 	kv.notifyChans = make(map[int]chan *OpReply)
 	kv.duplicateTable = make(map[int64]*LastOperationInfo)
 	kv.currentConfig = shardctrler.DefaultConfig()
@@ -177,16 +182,16 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	return kv
 }
 
-func (kv *ShardKV) applyToStateMachine(op Op) *OpReply {
+func (kv *ShardKV) applyToStateMachine(op Op, shardId int) *OpReply {
 	var value string
 	var err Err
 	switch op.OpType {
 	case OpGet:
-		value, err = kv.stateMachine.Get(op.Key)
+		value, err = kv.shards[shardId].Get(op.Key)
 	case OpPut:
-		err = kv.stateMachine.Put(op.Key, op.Value)
+		err = kv.shards[shardId].Put(op.Key, op.Value)
 	case OpAppend:
-		err = kv.stateMachine.Append(op.Key, op.Value)
+		err = kv.shards[shardId].Append(op.Key, op.Value)
 	}
 	return &OpReply{Value: value, Err: err}
 }
@@ -205,7 +210,7 @@ func (kv *ShardKV) removeNotifyChannel(index int) {
 func (kv *ShardKV) makeSnapshot(index int) {
 	buf := new(bytes.Buffer)
 	enc := labgob.NewEncoder(buf)
-	_ = enc.Encode(kv.stateMachine)
+	_ = enc.Encode(kv.shards)
 	_ = enc.Encode(kv.duplicateTable)
 	kv.rf.Snapshot(index, buf.Bytes())
 }
@@ -217,12 +222,12 @@ func (kv *ShardKV) restoreFromSnapshot(snapshot []byte) {
 
 	buf := bytes.NewBuffer(snapshot)
 	dec := labgob.NewDecoder(buf)
-	var stateMachine MemoryKVStateMachine
+	var shards map[int]*MemoryKVStateMachine
 	var dupTable map[int64]*LastOperationInfo
-	if dec.Decode(&stateMachine) != nil || dec.Decode(&dupTable) != nil {
+	if dec.Decode(&shards) != nil || dec.Decode(&dupTable) != nil {
 		panic("failed to restore state from snapshpt")
 	}
 
-	kv.stateMachine = &stateMachine
+	kv.shards = shards
 	kv.duplicateTable = dupTable
 }
