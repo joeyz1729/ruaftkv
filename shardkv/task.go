@@ -1,6 +1,7 @@
 package shardkv
 
 import (
+	"sync"
 	"time"
 )
 
@@ -65,11 +66,88 @@ func (kv *ShardKV) applyTask() {
 // fetchConfigTask
 func (kv *ShardKV) fetchConfigTask() {
 	for !kv.killed() {
-		kv.mu.Lock()
-		newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
-		kv.mu.Unlock()
-		// 配置同步
-		kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			kv.mu.Lock()
+			newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
+			kv.mu.Unlock()
+			// 配置同步
+			kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
+		}
 		time.Sleep(FetchConfigInterval)
 	}
+}
+
+// shardMigrationTask
+func (kv *ShardKV) shardMigrationTask() {
+	for !kv.killed() {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			kv.mu.Lock()
+			gidToShards := kv.getShardByStatus(MoveIn)
+			var wg sync.WaitGroup
+			for gid, shardIds := range gidToShards {
+				wg.Add(1)
+				go func(servers []string, configNum int, shardIds []int) {
+					defer wg.Done()
+					getShardArgs := ShardOperationArgs{configNum, shardIds}
+					for _, server := range servers {
+						var getShardReply ShardOperationReply
+						clientEnd := kv.make_end(server)
+						ok := clientEnd.Call("ShardKV.GetShardsData", &getShardArgs, &getShardReply)
+						// 获取到shard数据并进行迁移
+						if ok && getShardReply.Err == OK {
+							kv.ConfigCommand(RaftCommand{ShardMigration, getShardReply}, &OpReply{})
+						}
+					}
+				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)
+			}
+			kv.mu.Unlock()
+			wg.Wait()
+		}
+
+		time.Sleep(ShardMigrationInterval)
+	}
+}
+
+// getShardByStatus
+func (kv *ShardKV) getShardByStatus(status ShardStatus) map[int][]int {
+	gidToShards := make(map[int][]int)
+	for i, shard := range kv.shards {
+		if shard.Status == status {
+			gid := kv.prevConfig.Shards[i]
+			if gid != 0 {
+				if _, ok := gidToShards[gid]; !ok {
+					gidToShards[gid] = make([]int, 0)
+				}
+				gidToShards[gid] = append(gidToShards[gid], i)
+			}
+		}
+	}
+	return gidToShards
+}
+
+func (kv *ShardKV) GetShardsData(args *ShardOperationArgs, reply *ShardOperationReply) {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	if kv.currentConfig.Num < args.ConfigNum {
+		reply.Err = ErrNotReady
+		return
+	}
+
+	reply.ShardData = make(map[int]map[string]string)
+	for _, shardId := range args.ShardIds {
+		reply.ShardData[shardId] = kv.shards[shardId].copyData()
+	}
+
+	reply.DuplicateTable = make(map[int64]*LastOperationInfo)
+	for clientId, op := range kv.duplicateTable {
+		reply.DuplicateTable[clientId] = op.copyData()
+	}
+
+	reply.ConfigNum = args.ConfigNum
+	reply.Err = OK
 }
