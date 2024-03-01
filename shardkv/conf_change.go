@@ -7,9 +7,10 @@ import (
 )
 
 func (kv *ShardKV) ConfigCommand(command RaftCommand, reply *OpReply) {
+	// raft 日志同步
 	index, _, isLeader := kv.rf.Start(command)
 
-	// follower节点不处理请求
+	// 仅leader处理请求
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -48,7 +49,6 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 	default:
 		panic(fmt.Sprintf("invalid command type: %d", command.CmdType))
 	}
-
 }
 
 func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
@@ -65,8 +65,8 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 			}
 		}
 		if kv.currentConfig.Shards[i] == kv.gid && newConfig.Shards[i] != kv.gid {
-			// 迁移退出
-			gid := kv.currentConfig.Shards[i]
+			// shard 需要迁移出去
+			gid := newConfig.Shards[i]
 			if gid != 0 {
 				kv.shards[i].Status = MoveOut
 			}
@@ -77,33 +77,31 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 	return &OpReply{Err: OK}
 }
 
-// applyShardMigration
-func (kv *ShardKV) applyShardMigration(reply *ShardOperationReply) *OpReply {
-	if reply.ConfigNum != kv.currentConfig.Num {
-		return &OpReply{Err: ErrWrongConfig}
-	}
-	// shard data
-	for shardId, shardData := range reply.ShardData {
-		shard := kv.shards[shardId]
-		if shard.Status == MoveIn {
-			for k, v := range shardData {
-				shard.KV[k] = v
+func (kv *ShardKV) applyShardMigration(shardDataReply *ShardOperationReply) *OpReply {
+	if shardDataReply.ConfigNum == kv.currentConfig.Num {
+		for shardId, shardData := range shardDataReply.ShardData {
+			shard := kv.shards[shardId]
+			// 将数据存储到当前 Group 对应的 shard 中
+			if shard.Status == MoveIn {
+				for k, v := range shardData {
+					shard.KV[k] = v
+				}
+				// 状态置为 GC，等待清理
+				shard.Status = GC
+			} else {
+				break
 			}
-			shard.Status = GC
-		} else {
-			break
+		}
+
+		// 拷贝去重表数据
+		for clientId, dupTable := range shardDataReply.DuplicateTable {
+			table, ok := kv.duplicateTable[clientId]
+			if !ok || table.SeqId < dupTable.SeqId {
+				kv.duplicateTable[clientId] = dupTable
+			}
 		}
 	}
-
-	// duplicate table
-	for clientId, dupTable := range reply.DuplicateTable {
-		table, ok := kv.duplicateTable[clientId]
-		if !ok || table.SeqId < dupTable.SeqId {
-			kv.duplicateTable[clientId] = dupTable
-		}
-	}
-
-	return &OpReply{Err: OK}
+	return &OpReply{Err: ErrWrongConfig}
 }
 
 func (kv *ShardKV) applyShardGC(shardsInfo *ShardOperationArgs) *OpReply {

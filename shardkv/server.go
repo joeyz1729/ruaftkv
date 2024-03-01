@@ -35,7 +35,7 @@ type ShardKV struct {
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	// 判断Shard Group
+	// 判断请求 key 是否属于当前 Group
 	kv.mu.Lock()
 	if !kv.matchGroup(args.Key) {
 		reply.Err = ErrWrongGroup
@@ -44,12 +44,13 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	}
 	kv.mu.Unlock()
 
+	// 调用 raft，将请求存储到 raft 日志中并进行同步
 	index, _, isLeader := kv.rf.Start(RaftCommand{
 		CmdType: ClientOperation,
 		Data:    Op{Key: args.Key, OpType: OpGet},
 	})
 
-	// follower节点不处理请求
+	// 如果不是 Leader 的话，直接返回错误
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -107,6 +108,8 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	kv.mu.Unlock()
+
+	// 调用 raft，将请求存储到 raft 日志中并进行同步
 	index, _, isLeader := kv.rf.Start(RaftCommand{
 		CmdType: ClientOperation,
 		Data: Op{
@@ -118,7 +121,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		},
 	})
 
-	// follower节点不处理请求
+	// 如果不是 Leader 的话，直接返回错误
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return

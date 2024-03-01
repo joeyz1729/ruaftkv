@@ -3,20 +3,20 @@ package shardkv
 //
 // client code to talk to a sharded key/value service.
 //
-// the client first talks to the shardmaster to find out
+// the client first talks to the shardctrler to find out
 // the assignment of shards (keys) to groups, and then
 // talks to the group that holds the key's shard.
 //
 
-import "github.com/joeyz1729/ruaftkv/labrpc"
-import "crypto/rand"
-import "math/big"
-import "github.com/joeyz1729/ruaftkv/shardctrler"
-import "time"
+import (
+	"crypto/rand"
+	"math/big"
+	"time"
 
-// which shard is a key in?
-// please use this function,
-// and please do not change it.
+	"github.com/joeyz1729/ruaftkv/labrpc"
+	"github.com/joeyz1729/ruaftkv/shardctrler"
+)
+
 func key2shard(key string) int {
 	shard := 0
 	if len(key) > 0 {
@@ -61,10 +61,6 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	return ck
 }
 
-// Get fetch the current value for a key.
-// returns "" if the key does not exist.
-// keeps trying forever in the face of all other errors.
-// You will have to modify this function.
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{}
 	args.Key = key
@@ -100,7 +96,7 @@ func (ck *Clerk) Get(key string) string {
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
-		// ask master for the latest configuration.
+		// 获取最新配置信息
 		ck.config = ck.sm.Query(-1)
 	}
 }
@@ -145,7 +141,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
-		// ask master for the latest configuration.
+		// 获取最新配置信息
 		ck.config = ck.sm.Query(-1)
 	}
 }
