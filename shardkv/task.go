@@ -1,8 +1,6 @@
 package shardkv
 
 import (
-	"fmt"
-	"github.com/joeyz1729/ruaftkv/shardctrler"
 	"time"
 )
 
@@ -17,14 +15,18 @@ func (kv *ShardKV) applyTask() {
 					kv.mu.Unlock()
 					continue
 				}
+
 				var reply = new(OpReply)
 				kv.lastApplied = message.CommandIndex
 				raftCommand := message.Command.(RaftCommand)
+
 				if raftCommand.CmdType == ClientOperation {
 					op := raftCommand.Data.(Op)
 					if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
+						// 重复更新操作
 						reply = kv.duplicateTable[op.ClientId].Reply
 					} else {
+						// 应用到状态机
 						shardId := key2shard(op.Key)
 						reply = kv.applyToStateMachine(op, shardId)
 						if op.OpType != OpGet {
@@ -35,8 +37,7 @@ func (kv *ShardKV) applyTask() {
 							}
 						}
 					}
-				} else {
-					// ConfigChange
+				} else { // ConfigChange
 					reply = kv.handleConfigChangeMessage(raftCommand)
 				}
 
@@ -63,42 +64,12 @@ func (kv *ShardKV) applyTask() {
 
 // fetchConfigTask
 func (kv *ShardKV) fetchConfigTask() {
-	kv.mu.Lock()
 	for !kv.killed() {
+		kv.mu.Lock()
 		newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
-		kv.ConfigCommand(RaftCommand{
-			CmdType: ConfigChange,
-			Data:    newConfig,
-		}, &OpReply{})
-		kv.currentConfig = newConfig
 		kv.mu.Unlock()
+		// 配置同步
+		kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
 		time.Sleep(FetchConfigInterval)
 	}
-}
-
-func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
-	switch command.CmdType {
-	case ConfigChange:
-		newConfig := command.Data.(shardctrler.Config)
-		return kv.applyNewConfig(newConfig)
-	default:
-		panic(fmt.Sprintf("invalid command type: %d", command.CmdType))
-	}
-
-}
-
-func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
-	if kv.currentConfig.Num+1 == newConfig.Num {
-		for i := 0; i < shardctrler.NShards; i++ {
-			if kv.currentConfig.Shards[i] != kv.gid && newConfig.Shards[i] == kv.gid {
-				// 迁移进入
-			}
-
-			if kv.currentConfig.Shards[i] == kv.gid && newConfig.Shards[i] != kv.gid {
-				// 迁移退出
-			}
-		}
-	}
-	kv.currentConfig = newConfig
-	return &OpReply{}
 }
