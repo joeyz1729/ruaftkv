@@ -74,11 +74,14 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	}()
 }
 
+// matchGroup
 func (kv *ShardKV) matchGroup(key string) bool {
 	shard := key2shard(key)
-	return kv.currentConfig.Shards[shard] == kv.gid
+	shardStatus := kv.shards[shard].Status
+	return kv.currentConfig.Shards[shard] == kv.gid && (shardStatus == Normal || shardStatus == GC)
 }
 
+// requestDuplicated
 func (kv *ShardKV) requestDuplicated(clientId, seqId int64) bool {
 	info, ok := kv.duplicateTable[clientId]
 	return ok && seqId <= info.SeqId
@@ -152,6 +155,10 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
+	labgob.Register(RaftCommand{})
+	labgob.Register(shardctrler.Config{})
+	labgob.Register(ShardOperationArgs{})
+	labgob.Register(ShardOperationReply{})
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -217,22 +224,39 @@ func (kv *ShardKV) makeSnapshot(index int) {
 	enc := labgob.NewEncoder(buf)
 	_ = enc.Encode(kv.shards)
 	_ = enc.Encode(kv.duplicateTable)
+	_ = enc.Encode(kv.currentConfig)
+	_ = enc.Encode(kv.prevConfig)
 	kv.rf.Snapshot(index, buf.Bytes())
 }
 
 func (kv *ShardKV) restoreFromSnapshot(snapshot []byte) {
 	if len(snapshot) == 0 {
+		for i := 0; i < shardctrler.NShards; i++ {
+			if _, ok := kv.shards[i]; !ok {
+				kv.shards[i] = NewMemoryKVStateMachine()
+			}
+		}
 		return
 	}
 
 	buf := bytes.NewBuffer(snapshot)
 	dec := labgob.NewDecoder(buf)
-	var shards map[int]*MemoryKVStateMachine
-	var dupTable map[int64]*LastOperationInfo
-	if dec.Decode(&shards) != nil || dec.Decode(&dupTable) != nil {
+	var (
+		shards        map[int]*MemoryKVStateMachine
+		dupTable      map[int64]*LastOperationInfo
+		currentConfig shardctrler.Config
+		prevConfig    shardctrler.Config
+	)
+
+	if dec.Decode(&shards) != nil ||
+		dec.Decode(&dupTable) != nil ||
+		dec.Decode(&currentConfig) != nil ||
+		dec.Decode(&prevConfig) != nil {
 		panic("failed to restore state from snapshpt")
 	}
 
 	kv.shards = shards
 	kv.duplicateTable = dupTable
+	kv.currentConfig = currentConfig
+	kv.prevConfig = prevConfig
 }

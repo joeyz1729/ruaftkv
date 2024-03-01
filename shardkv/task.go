@@ -23,21 +23,7 @@ func (kv *ShardKV) applyTask() {
 
 				if raftCommand.CmdType == ClientOperation {
 					op := raftCommand.Data.(Op)
-					if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
-						// 重复更新操作
-						reply = kv.duplicateTable[op.ClientId].Reply
-					} else {
-						// 应用到状态机
-						shardId := key2shard(op.Key)
-						reply = kv.applyToStateMachine(op, shardId)
-						if op.OpType != OpGet {
-							// 保存去重信息
-							kv.duplicateTable[op.ClientId] = &LastOperationInfo{
-								SeqId: op.SeqId,
-								Reply: reply,
-							}
-						}
-					}
+					kv.applyClientOperation(op)
 				} else { // ConfigChange
 					reply = kv.handleConfigChangeMessage(raftCommand)
 				}
@@ -67,11 +53,26 @@ func (kv *ShardKV) applyTask() {
 func (kv *ShardKV) fetchConfigTask() {
 	for !kv.killed() {
 		if _, isLeader := kv.rf.GetState(); isLeader {
+			needFetch := true
 			kv.mu.Lock()
-			newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
+
+			for _, shard := range kv.shards {
+				if shard.Status != Normal {
+					needFetch = false
+					break
+				}
+			}
+			currentNum := kv.currentConfig.Num
 			kv.mu.Unlock()
 			// 配置同步
-			kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
+			if needFetch {
+				newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
+				if newConfig.Num == currentNum+1 {
+					kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
+				}
+
+			}
+
 		}
 		time.Sleep(FetchConfigInterval)
 	}
@@ -202,4 +203,24 @@ func (kv *ShardKV) DeleteShardData(args *ShardOperationArgs, reply *ShardOperati
 	var opReply OpReply
 	kv.ConfigCommand(RaftCommand{ShardGC, *args}, &opReply)
 	reply.Err = opReply.Err
+}
+
+func (kv *ShardKV) applyClientOperation(op Op) *OpReply {
+	var reply = &OpReply{}
+	if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
+		// 重复更新操作
+		reply = kv.duplicateTable[op.ClientId].Reply
+	} else {
+		// 应用到状态机
+		shardId := key2shard(op.Key)
+		reply = kv.applyToStateMachine(op, shardId)
+		if op.OpType != OpGet {
+			// 保存去重信息
+			kv.duplicateTable[op.ClientId] = &LastOperationInfo{
+				SeqId: op.SeqId,
+				Reply: reply,
+			}
+		}
+	}
+	return reply
 }
