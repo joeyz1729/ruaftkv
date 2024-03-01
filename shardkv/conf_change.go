@@ -42,6 +42,9 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 	case ShardMigration:
 		shardData := command.Data.(ShardOperationReply)
 		return kv.applyShardMigration(&shardData)
+	case ShardGC:
+		shardsInfo := command.Data.(ShardOperationArgs)
+		return kv.applyShardGC(&shardsInfo)
 	default:
 		panic(fmt.Sprintf("invalid command type: %d", command.CmdType))
 	}
@@ -71,7 +74,7 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 	}
 	kv.prevConfig = kv.currentConfig
 	kv.currentConfig = newConfig
-	return &OpReply{}
+	return &OpReply{Err: OK}
 }
 
 // applyShardMigration
@@ -79,7 +82,7 @@ func (kv *ShardKV) applyShardMigration(reply *ShardOperationReply) *OpReply {
 	if reply.ConfigNum != kv.currentConfig.Num {
 		return &OpReply{Err: ErrWrongConfig}
 	}
-
+	// shard data
 	for shardId, shardData := range reply.ShardData {
 		shard := kv.shards[shardId]
 		if shard.Status == MoveIn {
@@ -91,6 +94,8 @@ func (kv *ShardKV) applyShardMigration(reply *ShardOperationReply) *OpReply {
 			break
 		}
 	}
+
+	// duplicate table
 	for clientId, dupTable := range reply.DuplicateTable {
 		table, ok := kv.duplicateTable[clientId]
 		if !ok || table.SeqId < dupTable.SeqId {
@@ -98,5 +103,21 @@ func (kv *ShardKV) applyShardMigration(reply *ShardOperationReply) *OpReply {
 		}
 	}
 
+	return &OpReply{Err: OK}
+}
+
+func (kv *ShardKV) applyShardGC(shardsInfo *ShardOperationArgs) *OpReply {
+	if shardsInfo.ConfigNum == kv.currentConfig.Num {
+		for _, shardId := range shardsInfo.ShardIds {
+			shard := kv.shards[shardId]
+			if shard.Status == GC {
+				shard.Status = Normal
+			} else if shard.Status == MoveOut {
+				kv.shards[shardId] = NewMemoryKVStateMachine()
+			} else {
+				break
+			}
+		}
+	}
 	return &OpReply{Err: OK}
 }

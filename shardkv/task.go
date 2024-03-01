@@ -108,6 +108,40 @@ func (kv *ShardKV) shardMigrationTask() {
 	}
 }
 
+func (kv *ShardKV) shardGCTask() {
+	for !kv.killed() {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			kv.mu.Lock()
+
+			gidToShards := kv.getShardByStatus(GC)
+			var wg sync.WaitGroup
+
+			for gid, shardIds := range gidToShards {
+				wg.Add(1)
+				go func(servers []string, configNum int, shardIds []int) {
+					defer wg.Done()
+
+					shardGCArgs := ShardOperationArgs{configNum, shardIds}
+					for _, server := range servers {
+						// rpc 通知follower进行GC
+						var shardGCReply ShardOperationReply
+						clientEnd := kv.make_end(server)
+						ok := clientEnd.Call("ShardKV.DeleteShardData", &shardGCArgs, &shardGCReply)
+						if ok && shardGCReply.Err == OK {
+							// 当前leader节点进行GC
+							kv.ConfigCommand(RaftCommand{ShardGC, shardGCArgs}, &OpReply{})
+						}
+					}
+				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)
+			}
+			kv.mu.Unlock()
+			wg.Wait()
+		}
+
+		time.Sleep(ShardGCInterval)
+	}
+}
+
 // getShardByStatus
 func (kv *ShardKV) getShardByStatus(status ShardStatus) map[int][]int {
 	gidToShards := make(map[int][]int)
@@ -150,4 +184,22 @@ func (kv *ShardKV) GetShardsData(args *ShardOperationArgs, reply *ShardOperation
 
 	reply.ConfigNum = args.ConfigNum
 	reply.Err = OK
+}
+
+func (kv *ShardKV) DeleteShardData(args *ShardOperationArgs, reply *ShardOperationReply) {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	kv.mu.Lock()
+	if kv.currentConfig.Num > args.ConfigNum {
+		reply.Err = OK
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
+	var opReply OpReply
+	kv.ConfigCommand(RaftCommand{ShardGC, *args}, &opReply)
+	reply.Err = opReply.Err
 }
