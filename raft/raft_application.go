@@ -1,12 +1,13 @@
 package raft
 
+// applicationTicker 定期执行
 func (rf *Raft) applicationTicker() {
 	for !rf.killed() {
 		rf.mu.Lock()
+		// 通过该信号量等待，如果leader提交了新的日志，会通过信号量通知。
 		rf.applyCond.Wait()
 		entries := make([]*LogEntry, 0)
 		snapPendingApply := rf.snapPending
-
 		if !snapPendingApply {
 			if rf.lastApplied < rf.log.snapLastIndex {
 				rf.lastApplied = rf.log.snapLastIndex
@@ -22,7 +23,7 @@ func (rf *Raft) applicationTicker() {
 			}
 		}
 		rf.mu.Unlock()
-
+		// 将需要执行的日志全部发送到执行channel中。
 		if !snapPendingApply {
 			for i, entry := range entries {
 				rf.applyCh <- ApplyMsg{

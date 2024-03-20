@@ -24,7 +24,7 @@ type ShardCtrler struct {
 	lastApplied    int
 	stateMachine   *CtrlerStateMachine
 	notifyChans    map[int]chan *OpReply
-	duplicateTable map[int64]*LastOperationInfo
+	duplicateTable map[int64]LastOperationInfo
 }
 
 func (sc *ShardCtrler) requestDuplicated(clientId, seqId int64) bool {
@@ -159,7 +159,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.lastApplied = 0
 	sc.stateMachine = NewCtrlerStateMachine()
 	sc.notifyChans = make(map[int]chan *OpReply)
-	sc.duplicateTable = make(map[int64]*LastOperationInfo)
+	sc.duplicateTable = make(map[int64]LastOperationInfo)
 
 	go sc.applyTask()
 	return sc
@@ -185,7 +185,7 @@ func (sc *ShardCtrler) applyTask() {
 				} else {
 					opReply = sc.applyToStateMachine(op)
 					if op.OpType != OpQuery {
-						sc.duplicateTable[op.ClientId] = &LastOperationInfo{
+						sc.duplicateTable[op.ClientId] = LastOperationInfo{
 							SeqId: op.SeqId,
 							Reply: opReply,
 						}

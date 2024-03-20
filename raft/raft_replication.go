@@ -69,37 +69,39 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 日志同步
 	if args.PrevLogIndex >= rf.log.size() {
+		// follower节点的日志缺少太多，同步位置应该更早
 		reply.ConflictTerm = InvalidTerm
 		reply.ConflictIndex = rf.log.size()
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Follower log too short, Len:%d < Prev:%d", args.LeaderId, rf.log.size(), args.PrevLogIndex)
 		return
 	}
 	if args.PrevLogIndex < rf.log.snapLastIndex {
+		// follower的快照日志够多，同步位置应该更晚
 		reply.ConflictTerm = rf.log.snapLastTerm
 		reply.ConflictIndex = rf.log.snapLastIndex
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Follower log truncated in %d", args.LeaderId, rf.log.snapLastIndex)
 		return
 	}
 	if rf.log.at(args.PrevLogIndex).Term != args.PrevLogTerm {
+		// 同步日志的前一条任期不对，需要重新同步
 		reply.ConflictTerm = rf.log.at(args.PrevLogIndex).Term
 		reply.ConflictIndex = rf.log.firstFor(reply.ConflictTerm)
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, reject log, prev log's term not match, [%d]: T%d != T%d", args.LeaderId, rf.log.at(args.PrevLogIndex).Term, args.PrevLogTerm)
 		return
 	}
 
-	// 同步日志
+	// 此时follower和leader的前部分日志已经对齐，可以继续同步日志
 	rf.log.appendFrom(args.PrevLogIndex, args.Entries...)
 	rf.persistLocked()
 	reply.Success = true
 	LOG(rf.me, rf.currentTerm, DLog2, "Follower accept logs: (%d, %d]", args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
 
-	// hanle LeaderCommit
+	// 如果leader节点日志已经提交，follower需要同步提交日志。
 	if args.LeaderCommit > rf.commitIndex {
 		LOG(rf.me, rf.currentTerm, DApply, "Follower update the commit index %d->%d", rf.commitIndex, args.LeaderCommit)
 		rf.commitIndex = args.LeaderCommit
 		rf.applyCond.Signal()
 	}
-
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -107,6 +109,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+// getMajorityIndexLocked 找到大部分节点已经同步的位置。
 func (rf *Raft) getMajorityIndexLocked() int {
 	tmpIndices := make([]int, len(rf.peers))
 	copy(tmpIndices, rf.matchIndex)
@@ -117,6 +120,8 @@ func (rf *Raft) getMajorityIndexLocked() int {
 
 // startReplication leader向follower发起日志同步，并处理返回结果
 func (rf *Raft) startReplication(term int) bool {
+
+	// 并发发送并处理返回值
 	replicateToPeer := func(peer int, args *AppendEntriesArgs) {
 		reply := &AppendEntriesReply{}
 		ok := rf.sendAppendEntries(peer, args, reply)
@@ -129,6 +134,7 @@ func (rf *Raft) startReplication(term int) bool {
 		}
 		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Append, Reply=%v", peer, reply.String())
 
+		// 收到的任期更大
 		if reply.Term > rf.currentTerm {
 			rf.becomeFollowerLocked(reply.Term)
 			return
@@ -139,28 +145,31 @@ func (rf *Raft) startReplication(term int) bool {
 			return
 		}
 
+		// 日志同步失败
 		if !reply.Success {
 			prevNextIndex := rf.nextIndex[peer]
 			if reply.ConflictTerm == InvalidTerm {
-				// follower 日志过短
+				// follower 日志过短，需要同步更早的日志
 				rf.nextIndex[peer] = reply.ConflictIndex
 			} else {
-				// follower 日志term不匹配
+				// follower 日志term不匹配，找到冲突任期的第一条日志
 				firstTermIndex := rf.log.firstFor(reply.ConflictTerm)
 				if firstTermIndex != InvalidIndex {
-					// 以leader为准，跳过conflictTerm的所有日志
+					// 如果存在，则重新同步该任期的日志
 					rf.nextIndex[peer] = firstTermIndex
 				} else {
-					// leader没有该term的日志，以follower为准
+					// 如果不存在，重新同步follower index位置的日志
 					rf.nextIndex[peer] = reply.ConflictIndex
 				}
 			}
 
+			// 注意单调性，不能增加跳过
 			if rf.nextIndex[peer] > prevNextIndex {
 				// 防止leader记录的peer nextIndex增大
 				rf.nextIndex[peer] = prevNextIndex
 			}
 
+			// 更新前一条日志的任期
 			nextPrevIndex := rf.nextIndex[peer] - 1
 			nextPrevTerm := InvalidTerm
 			if nextPrevIndex >= rf.log.snapLastIndex {
@@ -176,7 +185,8 @@ func (rf *Raft) startReplication(term int) bool {
 		rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries)
 		rf.nextIndex[peer] = rf.matchIndex[peer] + 1
 
-		// 更新leader commit log index
+		// 如果一个日志（index+term）被大部分节点都同步了，那么就可以提交。
+		// 更新leader节点保存的索引，并通过信号量进行通知。
 		majorityMatched := rf.getMajorityIndexLocked()
 		if majorityMatched > rf.commitIndex && rf.log.at(majorityMatched).Term == rf.currentTerm {
 			LOG(rf.me, rf.currentTerm, DApply, "Leader update the commit index %d->%d", rf.commitIndex, majorityMatched)
@@ -193,6 +203,7 @@ func (rf *Raft) startReplication(term int) bool {
 		return false
 	}
 
+	// 并发发送请求
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			rf.matchIndex[peer] = rf.log.size() - 1
@@ -200,8 +211,9 @@ func (rf *Raft) startReplication(term int) bool {
 			continue
 		}
 		prevIndex := rf.nextIndex[peer] - 1
+		// 如果日志太小了，前面的已经保存快照了。
+		// 就将快照文件发送给follower，先安装快照。
 		if prevIndex < rf.log.snapLastIndex {
-			// index太小，需要同步snapshot
 			args := &InstallSnapshotArgs{
 				Term:              rf.currentTerm,
 				LeaderId:          rf.me,
@@ -213,7 +225,7 @@ func (rf *Raft) startReplication(term int) bool {
 			go rf.installToPeer(peer, term, args)
 			continue
 		}
-		// 否则日志同步
+		// 否则就进行正常的日志同步流程，把后面的全部发送。
 		prevTerm := rf.log.at(prevIndex).Term
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,
@@ -236,7 +248,6 @@ func (rf *Raft) replicationTicker(term int) {
 		if !ok {
 			break
 		}
-
 		time.Sleep(replicationInterval)
 	}
 }

@@ -2,7 +2,7 @@ package raft
 
 import "fmt"
 
-// the service says it has created a snapshot that has
+// Snapshot the service says it has created a snapshot that has
 // all info up to and including index. this means the
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
@@ -10,10 +10,12 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (PartD).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	// 前面的日志还没全部提交，拒绝同步。
 	if index > rf.commitIndex {
 		LOG(rf.me, rf.currentTerm, DSnap, "Couldn't snapshot before CommitIdx: %d>%d", index, rf.commitIndex)
 		return
 	}
+	// 本次快照比已经存储的快照要更旧，拒绝。
 	if index <= rf.log.snapLastIndex {
 		LOG(rf.me, rf.currentTerm, DSnap, "Already snapshot in %d<=%d", index, rf.log.snapLastIndex)
 		return
@@ -60,7 +62,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.becomeFollowerLocked(args.Term)
 	}
 
-	// 已经同步过snapshot
+	// 已经同步的快照要更新
 	if rf.log.snapLastIndex >= args.LastIncludedIndex {
 		LOG(rf.me, rf.currentTerm, DSnap, "<- S%d, Reject Snap, Already installed: %d>%d", args.LeaderId, rf.log.snapLastIndex, args.LastIncludedIndex)
 		return
