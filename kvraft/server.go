@@ -23,8 +23,8 @@ type KVServer struct {
 	// Your definitions here.
 	lastApplied    int
 	stateMachine   *MemoryKVStateMachine
-	notifyChans    map[int]chan *OpReply
-	duplicateTable map[int64]*LastOperationInfo
+	notifyChans    map[int]chan *OpReply	// 用于返回客户端请求
+	duplicateTable map[int64]*LastOperationInfo	// 请求去重，防止写请求重复apply
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -51,15 +51,15 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	case <-time.After(ClientRequestTimeout):
 		reply.Err = ErrTimeout
 	}
-
+	// 异步释放掉channel
 	go func() {
 		kv.mu.Lock()
 		kv.removeNotifyChannel(index)
 		kv.mu.Unlock()
 	}()
-	return
 }
 
+// requestDuplicated 检查是否为重复请求
 func (kv *KVServer) requestDuplicated(clientId, seqId int64) bool {
 	info, ok := kv.duplicateTable[clientId]
 	return ok && seqId <= info.SeqId
@@ -104,7 +104,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		kv.removeNotifyChannel(index)
 		kv.mu.Unlock()
 	}()
-	return
 }
 
 // Kill the tester calls Kill() when a KVServer instance won't
@@ -172,6 +171,7 @@ func (kv *KVServer) applyTask() {
 		select {
 		case message := <-kv.applyCh:
 			if message.CommandValid {
+				// 命令形式的消息
 				kv.mu.Lock()
 				if message.CommandIndex <= kv.lastApplied {
 					kv.mu.Unlock()
@@ -205,6 +205,7 @@ func (kv *KVServer) applyTask() {
 
 				kv.mu.Unlock()
 			} else if message.SnapshotValid {
+				// 快照形式的消息
 				kv.mu.Lock()
 				kv.restoreFromSnapshot(message.Snapshot)
 				kv.lastApplied = message.SnapshotIndex
@@ -235,6 +236,7 @@ func (kv *KVServer) applyToStateMachine(op Op) *OpReply {
 
 }
 
+// getNotifyChannel 获取对应日志索引的通知channel
 func (kv *KVServer) getNotifyChannel(index int) chan *OpReply {
 	if _, ok := kv.notifyChans[index]; !ok {
 		kv.notifyChans[index] = make(chan *OpReply, 1)
@@ -246,6 +248,7 @@ func (kv *KVServer) removeNotifyChannel(index int) {
 	delete(kv.notifyChans, index)
 }
 
+// makeSnapshot 保存index前的日志为快照
 func (kv *KVServer) makeSnapshot(index int) {
 	buf := new(bytes.Buffer)
 	enc := labgob.NewEncoder(buf)
@@ -254,6 +257,7 @@ func (kv *KVServer) makeSnapshot(index int) {
 	kv.rf.Snapshot(index, buf.Bytes())
 }
 
+// restoreFromSnapshot 从快照加载kv存储
 func (kv *KVServer) restoreFromSnapshot(snapshot []byte) {
 	if len(snapshot) == 0 {
 		return
